@@ -1,0 +1,33 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android Studio / IntelliJ
+*.iml
+/local.properties
+/.idea/
+.kotlin/
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+
+# Keystore
+*.jks
+*.keystore
+
+# Build outputs
+*.ap_
+*.apk
+*.aab
+output.json
+
+# Generated files
+annotationProcessors.json
+*_classpath.txt
+*_dependencies.txt
+
+# Local config (may contain signing keys)
+local.properties

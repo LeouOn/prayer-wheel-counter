@@ -1,0 +1,622 @@
+package com.prayerwheel.app.ui.wheel
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.prayerwheel.app.data.datastore.SpinMode
+import com.prayerwheel.app.data.datastore.UserPreferences
+import com.prayerwheel.app.data.db.dao.LifetimeStatsDao
+import com.prayerwheel.app.data.db.dao.SessionDao
+import com.prayerwheel.app.data.model.LifetimeStats
+import com.prayerwheel.app.viewmodel.WheelViewModel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
+
+/**
+ * Settings screen with all preference groups.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(
+    userPreferences: UserPreferences,
+    viewModel: WheelViewModel,
+    lifetimeStatsDao: LifetimeStatsDao,
+    sessionDao: SessionDao,
+    onNavigateBack: () -> Unit,
+    onNavigateToCalculator: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scope = rememberCoroutineScope()
+    
+    val theme by userPreferences.theme.collectAsState(initial = "system")
+    val spinMode by userPreferences.spinMode.collectAsState(initial = SpinMode.MANUAL)
+    val hapticEnabled by userPreferences.hapticEnabled.collectAsState(initial = true)
+    val mantrasPerRotation by userPreferences.mantrasPerRotation.collectAsState(initial = 1)
+    val autoSpinRpm by userPreferences.autoSpinRpm.collectAsState(initial = 30)
+    val friction by userPreferences.friction.collectAsState(initial = 0.97f)
+    val clockwiseDirection by userPreferences.clockwiseDirection.collectAsState(initial = true)
+    val recitationEnabled by userPreferences.recitationEnabled.collectAsState(initial = false)
+    val recitationVolume by userPreferences.recitationVolume.collectAsState(initial = 0.5f)
+    val bellAtMilestones by userPreferences.bellAtMilestones.collectAsState(initial = false)
+    val ambientEnabled by userPreferences.ambientEnabled.collectAsState(initial = false)
+    val ambientVolume by userPreferences.ambientVolume.collectAsState(initial = 0.5f)
+    val masterVolume by userPreferences.masterVolume.collectAsState(initial = 1.0f)
+    val showCounter by userPreferences.showCounter.collectAsState(initial = true)
+    val milestoneNotifications by userPreferences.milestoneNotifications.collectAsState(initial = true)
+    val keepScreenOn by userPreferences.keepScreenOn.collectAsState(initial = false)
+    val counterClockwiseEnabled by userPreferences.counterClockwiseEnabled.collectAsState(initial = false)
+
+    // Lifetime stats
+    val lifetimeStats by lifetimeStatsDao.observeStats().collectAsState(initial = null)
+
+    // Expandable section states
+    var wheelExpanded by remember { mutableStateOf(true) }
+    var interactionExpanded by remember { mutableStateOf(true) }
+    var audioExpanded by remember { mutableStateOf(false) }
+    var practiceExpanded by remember { mutableStateOf(false) }
+    var displayExpanded by remember { mutableStateOf(true) }
+    var dataExpanded by remember { mutableStateOf(false) }
+    var aboutExpanded by remember { mutableStateOf(false) }
+
+    // Reset confirmation dialog
+    var showResetDialog by remember { mutableStateOf(false) }
+
+    // Theme dropdown
+    var showThemeDropdown by remember { mutableStateOf(false) }
+
+    // Spin mode dropdown
+    var showSpinModeDropdown by remember { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "Settings",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            )
+        },
+        modifier = modifier
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // WHEEL SECTION
+            SettingsSection(
+                title = "Wheel",
+                expanded = wheelExpanded,
+                onToggle = { wheelExpanded = !wheelExpanded }
+            ) {
+                // Mantra - placeholder for mantra detail
+                ListItem(
+                    headlineContent = { Text("Mantra") },
+                    supportingContent = { Text("Om Mani Padme Hum") },
+                    modifier = Modifier.clickable { /* Navigate to mantra detail */ }
+                )
+                
+                // Mantras per Rotation
+                ListItem(
+                    headlineContent = { Text("Mantras per Rotation") },
+                    supportingContent = { Text("$mantrasPerRotation") }
+                )
+                Slider(
+                    value = mantrasPerRotation.toFloat(),
+                    onValueChange = {
+                        scope.launch { userPreferences.setMantrasPerRotation(it.toLong()) }
+                    },
+                    valueRange = 1f..108f,
+                    steps = 106,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                )
+
+                // Direction
+                ListItem(
+                    headlineContent = { Text("Direction") },
+                    supportingContent = { Text(if (clockwiseDirection) "Clockwise" else "Counter-clockwise") },
+                    trailingContent = {
+                        Switch(
+                            checked = clockwiseDirection,
+                            onCheckedChange = {
+                                scope.launch { userPreferences.setClockwiseDirection(it) }
+                            }
+                        )
+                    }
+                )
+            }
+
+            // INTERACTION SECTION
+            SettingsSection(
+                title = "Interaction",
+                expanded = interactionExpanded,
+                onToggle = { interactionExpanded = !interactionExpanded }
+            ) {
+                // Spin Mode
+                ListItem(
+                    headlineContent = { Text("Spin Mode") },
+                    supportingContent = { Text(spinMode.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }) },
+                    modifier = Modifier.clickable { showSpinModeDropdown = true }
+                )
+                DropdownMenu(
+                    expanded = showSpinModeDropdown,
+                    onDismissRequest = { showSpinModeDropdown = false }
+                ) {
+                    SpinMode.entries.forEach { mode ->
+                        DropdownMenuItem(
+                            text = { Text(mode.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }) },
+                            onClick = {
+                                scope.launch { userPreferences.setSpinMode(mode) }
+                                showSpinModeDropdown = false
+                            }
+                        )
+                    }
+                }
+
+                // Friction
+                ListItem(
+                    headlineContent = { Text("Friction") },
+                    supportingContent = { Text("Low - High") }
+                )
+                Slider(
+                    value = friction,
+                    onValueChange = {
+                        scope.launch { userPreferences.setFriction(it) }
+                    },
+                    valueRange = 0.9f..0.99f,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                )
+
+                // Max RPM (for auto-spin)
+                if (spinMode == SpinMode.AUTO_SPIN) {
+                    ListItem(
+                        headlineContent = { Text("Max RPM") },
+                        supportingContent = { Text("$autoSpinRpm RPM") }
+                    )
+                    Slider(
+                        value = autoSpinRpm.toFloat(),
+                        onValueChange = {
+                            scope.launch { userPreferences.setAutoSpinRpm(it.toInt()) }
+                        },
+                        valueRange = 1f..60f,
+                        steps = 58,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                    )
+                }
+
+                // Haptics
+                ListItem(
+                    headlineContent = { Text("Haptics") },
+                    trailingContent = {
+                        Switch(
+                            checked = hapticEnabled,
+                            onCheckedChange = {
+                                scope.launch { userPreferences.setHapticEnabled(it) }
+                            }
+                        )
+                    }
+                )
+
+                // Counter-clockwise
+                ListItem(
+                    headlineContent = { Text("Counter-clockwise rotations") },
+                    supportingContent = { Text("Count anti-clockwise spins") },
+                    trailingContent = {
+                        Switch(
+                            checked = counterClockwiseEnabled,
+                            onCheckedChange = {
+                                scope.launch { userPreferences.setCounterClockwiseEnabled(it) }
+                            }
+                        )
+                    }
+                )
+            }
+
+            // AUDIO SECTION
+            SettingsSection(
+                title = "Audio",
+                expanded = audioExpanded,
+                onToggle = { audioExpanded = !audioExpanded }
+            ) {
+                // Recitation
+                ListItem(
+                    headlineContent = { Text("Recitation") },
+                    trailingContent = {
+                        Switch(
+                            checked = recitationEnabled,
+                            onCheckedChange = {
+                                scope.launch { userPreferences.setRecitationEnabled(it) }
+                            }
+                        )
+                    }
+                )
+                if (recitationEnabled) {
+                    ListItem(
+                        headlineContent = { Text("Recitation Volume") },
+                        supportingContent = { Text("${(recitationVolume * 100).toInt()}%") }
+                    )
+                    Slider(
+                        value = recitationVolume,
+                        onValueChange = {
+                            scope.launch { userPreferences.setRecitationVolume(it) }
+                        },
+                        valueRange = 0f..1f,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                    )
+                }
+
+                // Bell at milestones
+                ListItem(
+                    headlineContent = { Text("Bell at milestones") },
+                    trailingContent = {
+                        Switch(
+                            checked = bellAtMilestones,
+                            onCheckedChange = {
+                                scope.launch { userPreferences.setBellAtMilestones(it) }
+                            }
+                        )
+                    }
+                )
+
+                // Ambient sounds
+                ListItem(
+                    headlineContent = { Text("Ambient sounds") },
+                    trailingContent = {
+                        Switch(
+                            checked = ambientEnabled,
+                            onCheckedChange = {
+                                scope.launch { userPreferences.setAmbientEnabled(it) }
+                            }
+                        )
+                    }
+                )
+                if (ambientEnabled) {
+                    ListItem(
+                        headlineContent = { Text("Ambient Volume") },
+                        supportingContent = { Text("${(ambientVolume * 100).toInt()}%") }
+                    )
+                    Slider(
+                        value = ambientVolume,
+                        onValueChange = {
+                            scope.launch { userPreferences.setAmbientVolume(it) }
+                        },
+                        valueRange = 0f..1f,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                    )
+                }
+
+                // Master volume
+                ListItem(
+                    headlineContent = { Text("Master Volume") },
+                    supportingContent = { Text("${(masterVolume * 100).toInt()}%") }
+                )
+                Slider(
+                    value = masterVolume,
+                    onValueChange = {
+                        scope.launch { userPreferences.setMasterVolume(it) }
+                    },
+                    valueRange = 0f..1f,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                )
+            }
+
+            // PRACTICE SECTION
+            SettingsSection(
+                title = "Practice",
+                expanded = practiceExpanded,
+                onToggle = { practiceExpanded = !practiceExpanded }
+            ) {
+                // Calculator
+                ListItem(
+                    headlineContent = { Text("Practice Calculator") },
+                    supportingContent = { Text("Project future mantra accumulations") },
+                    leadingContent = {
+                        Icon(
+                            imageVector = Icons.Default.DateRange,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    },
+                    modifier = Modifier.clickable { onNavigateToCalculator() }
+                )
+
+                // Dedication Text
+                ListItem(
+                    headlineContent = { Text("Dedication Text") },
+                    supportingContent = { Text("Edit your dedication message") },
+                    modifier = Modifier.clickable { /* Open dedication editor */ }
+                )
+
+                // Show counter
+                ListItem(
+                    headlineContent = { Text("Show counter") },
+                    trailingContent = {
+                        Switch(
+                            checked = showCounter,
+                            onCheckedChange = {
+                                scope.launch { userPreferences.setShowCounter(it) }
+                            }
+                        )
+                    }
+                )
+
+                // Milestone notifications
+                ListItem(
+                    headlineContent = { Text("Milestone notifications") },
+                    trailingContent = {
+                        Switch(
+                            checked = milestoneNotifications,
+                            onCheckedChange = {
+                                scope.launch { userPreferences.setMilestoneNotifications(it) }
+                            }
+                        )
+                    }
+                )
+
+                // Daily reminder (placeholder)
+                ListItem(
+                    headlineContent = { Text("Daily reminder") },
+                    supportingContent = { Text("Not yet implemented") }
+                )
+            }
+
+            // DISPLAY SECTION
+            SettingsSection(
+                title = "Display",
+                expanded = displayExpanded,
+                onToggle = { displayExpanded = !displayExpanded }
+            ) {
+                // Theme
+                ListItem(
+                    headlineContent = { Text("Theme") },
+                    supportingContent = { Text(theme.replaceFirstChar { it.uppercase() }) },
+                    modifier = Modifier.clickable { showThemeDropdown = true }
+                )
+                DropdownMenu(
+                    expanded = showThemeDropdown,
+                    onDismissRequest = { showThemeDropdown = false }
+                ) {
+                    listOf("system", "light", "dark", "sepia", "dawn_dusk").forEach { themeOption ->
+                        DropdownMenuItem(
+                            text = { Text(themeOption.replace("_", " ").replaceFirstChar { it.uppercase() }) },
+                            onClick = {
+                                scope.launch { userPreferences.setTheme(themeOption) }
+                                showThemeDropdown = false
+                            }
+                        )
+                    }
+                }
+
+                // Keep screen on
+                ListItem(
+                    headlineContent = { Text("Keep screen on") },
+                    trailingContent = {
+                        Switch(
+                            checked = keepScreenOn,
+                            onCheckedChange = {
+                                scope.launch { userPreferences.setKeepScreenOn(it) }
+                            }
+                        )
+                    }
+                )
+            }
+
+            // DATA SECTION
+            SettingsSection(
+                title = "Data",
+                expanded = dataExpanded,
+                onToggle = { dataExpanded = !dataExpanded }
+            ) {
+                // Current stats
+                lifetimeStats?.let { stats ->
+                    ListItem(
+                        headlineContent = { Text("Current Stats") },
+                        supportingContent = {
+                            Text("${stats.sessionsCompleted} sessions, ${stats.totalRotations} rotations, ${stats.totalMantras} mantras")
+                        }
+                    )
+                }
+
+                // Export CSV (placeholder)
+                ListItem(
+                    headlineContent = { Text("Export (CSV)") },
+                    modifier = Modifier.clickable { /* Implement file save */ }
+                )
+
+                // Export JSON (placeholder)
+                ListItem(
+                    headlineContent = { Text("Export (JSON)") },
+                    modifier = Modifier.clickable { /* Implement file save */ }
+                )
+
+                // Backup (placeholder)
+                ListItem(
+                    headlineContent = { Text("Backup") },
+                    modifier = Modifier.clickable { /* Implement backup */ }
+                )
+
+                // Reset all data
+                ListItem(
+                    headlineContent = { Text("Reset all data") },
+                    leadingContent = {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    },
+                    modifier = Modifier.clickable { showResetDialog = true }
+                )
+            }
+
+            // ABOUT SECTION
+            SettingsSection(
+                title = "About",
+                expanded = aboutExpanded,
+                onToggle = { aboutExpanded = !aboutExpanded }
+            ) {
+                // Version
+                ListItem(
+                    headlineContent = { Text("Version") },
+                    supportingContent = { Text("1.0.0") }
+                )
+
+                // Privacy
+                ListItem(
+                    headlineContent = { Text("Privacy") },
+                    supportingContent = { Text("No data is collected or shared") }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        // Reset confirmation dialog
+        if (showResetDialog) {
+            AlertDialog(
+                onDismissRequest = { showResetDialog = false },
+                title = { Text("Reset All Data") },
+                text = { Text("This will permanently delete all your practice history and preferences. This action cannot be undone.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                userPreferences.clearAllData()
+                                sessionDao.deleteAll()
+                                lifetimeStatsDao.deleteAll()
+                            }
+                            showResetDialog = false
+                        }
+                    ) {
+                        Text("Reset", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showResetDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+    }
+}
+
+/**
+ * Expandable settings section.
+ */
+@Composable
+private fun SettingsSection(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column {
+            // Section header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggle() }
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (expanded) "Collapse" else "Expand"
+                )
+            }
+
+            // Section content
+            if (expanded) {
+                Column {
+                    content()
+                }
+            }
+        }
+    }
+}

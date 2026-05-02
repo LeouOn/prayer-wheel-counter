@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Prayer wheel circle -->
+    <path
+        android:fillColor="#8B4513"
+        android:pathData="M54,24 A30,30 0 1,1 53.99,24z" />
+    <!-- Inner circle -->
+    <path
+        android:fillColor="#DAA520"
+        android:pathData="M54,32 A22,22 0 1,1 53.99,32z" />
+    <!-- Center dot -->
+    <path
+        android:fillColor="#8B4513"
+        android:pathData="M54,46 A8,8 0 1,1 53.99,46z" />
+    <!-- Spokes -->
+    <path
+        android:fillColor="#8B4513"
+        android:pathData="M52,34 L56,34 L56,44 L52,44z" />
+    <path
+        android:fillColor="#8B4513"
+        android:pathData="M52,64 L56,64 L56,74 L52,74z" />
+    <path
+        android:fillColor="#8B4513"
+        android:pathData="M34,52 L44,52 L44,56 L34,56z" />
+    <path
+        android:fillColor="#8B4513"
+        android:pathData="M64,52 L74,52 L74,56 L64,56z" />
+</vector>
