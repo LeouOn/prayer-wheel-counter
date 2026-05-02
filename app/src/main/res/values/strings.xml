@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Prayer Wheel</string>
+    <string name="foreground_service_rationale">Shows ongoing prayer wheel session timer and mantra count while the app is in the background</string>
 </resources>

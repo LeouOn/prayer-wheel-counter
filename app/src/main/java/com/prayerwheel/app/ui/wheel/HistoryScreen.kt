@@ -74,6 +74,7 @@ fun HistoryScreen(
     sessionDao: SessionDao,
     onNavigateBack: () -> Unit,
     onNavigateToStats: () -> Unit,
+    onNavigateToExport: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val sessionsList by sessions.collectAsState(initial = emptyList())
@@ -153,9 +154,7 @@ fun HistoryScreen(
                             contentDescription = "Statistics"
                         )
                     }
-                    IconButton(onClick = {
-                        exportSessionsToCsv(context, filteredSessions)
-                    }) {
+                    IconButton(onClick = onNavigateToExport) {
                         Icon(
                             imageVector = Icons.Default.Share,
                             contentDescription = "Export"
@@ -254,6 +253,7 @@ fun HistoryScreen(
                                             SpinMode.MANUAL -> "Manual"
                                             SpinMode.TWO_HANDED -> "Two-Handed"
                                             SpinMode.AUTO_SPIN -> "Auto-Spin"
+                                            SpinMode.TWO_HANDED_AUTO -> "Two-Handed Auto"
                                         }
                                     )
                                 }
@@ -725,6 +725,7 @@ private fun formatSpinMode(mode: String): String {
             SpinMode.MANUAL -> "Manual"
             SpinMode.TWO_HANDED -> "Two-Handed"
             SpinMode.AUTO_SPIN -> "Auto-Spin"
+            SpinMode.TWO_HANDED_AUTO -> "Two-Handed Auto"
         }
     } catch (e: IllegalArgumentException) {
         mode

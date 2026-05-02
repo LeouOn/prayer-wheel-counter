@@ -16,6 +16,8 @@ import com.prayerwheel.app.ui.wheel.SettingsScreen
 import com.prayerwheel.app.ui.wheel.StatsScreen
 import com.prayerwheel.app.ui.wheel.WheelScreen
 import com.prayerwheel.app.ui.wheel.CalculatorScreen
+import com.prayerwheel.app.ui.wheel.CalendarScreen
+import com.prayerwheel.app.ui.wheel.ExportScreen
 import com.prayerwheel.app.viewmodel.WheelViewModel
 
 /**
@@ -28,6 +30,8 @@ sealed class Screen(val route: String) {
     data object Onboarding : Screen("onboarding")
     data object Stats : Screen("stats")
     data object Calculator : Screen("calculator")
+    data object Calendar : Screen("calendar")
+    data object Export : Screen("export")
 }
 
 /**
@@ -90,6 +94,9 @@ fun PrayerWheelNavHost(
                 },
                 onNavigateToStats = {
                     navController.navigate(Screen.Stats.route)
+                },
+                onNavigateToExport = {
+                    navController.navigate(Screen.Export.route)
                 }
             )
         }
@@ -128,6 +135,9 @@ fun PrayerWheelNavHost(
                 recentSessions = recentSessions,
                 onNavigateBack = {
                     navController.popBackStack()
+                },
+                onNavigateToCalendar = {
+                    navController.navigate(Screen.Calendar.route)
                 }
             )
         }
@@ -138,6 +148,24 @@ fun PrayerWheelNavHost(
             CalculatorScreen(
                 defaultRpm = averageRpm,
                 defaultMantrasPerRotation = mantrasPerRotation,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(Screen.Calendar.route) {
+            CalendarScreen(
+                sessionDao = sessionDao,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(Screen.Export.route) {
+            ExportScreen(
+                sessionDao = sessionDao,
                 onNavigateBack = {
                     navController.popBackStack()
                 }

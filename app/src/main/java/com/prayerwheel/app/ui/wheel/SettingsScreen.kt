@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -89,6 +90,9 @@ fun SettingsScreen(
     val milestoneNotifications by userPreferences.milestoneNotifications.collectAsState(initial = true)
     val keepScreenOn by userPreferences.keepScreenOn.collectAsState(initial = false)
     val counterClockwiseEnabled by userPreferences.counterClockwiseEnabled.collectAsState(initial = false)
+    val customDedication by userPreferences.customDedication.collectAsState(initial = null)
+    val sessionTimeGoalSeconds by userPreferences.sessionTimeGoalSeconds.collectAsState(initial = 0L)
+    val dailyTimeGoalSeconds by userPreferences.dailyTimeGoalSeconds.collectAsState(initial = 0L)
 
     // Lifetime stats
     val lifetimeStats by lifetimeStatsDao.observeStats().collectAsState(initial = null)
@@ -104,9 +108,14 @@ fun SettingsScreen(
 
     // Reset confirmation dialog
     var showResetDialog by remember { mutableStateOf(false) }
+    
+    // Dedication editor dialog
+    var showDedicationEditor by remember { mutableStateOf(false) }
+    var dedicationEditorText by remember { mutableStateOf(customDedication ?: UserPreferences.DEFAULT_DEDICATION_TEXT) }
 
-    // Theme dropdown
+    // Dropdown states
     var showThemeDropdown by remember { mutableStateOf(false) }
+    var showNumberFormatDropdown by remember { mutableStateOf(false) }
 
     // Spin mode dropdown
     var showSpinModeDropdown by remember { mutableStateOf(false) }
@@ -394,9 +403,12 @@ fun SettingsScreen(
 
                 // Dedication Text
                 ListItem(
-                    headlineContent = { Text("Dedication Text") },
-                    supportingContent = { Text("Edit your dedication message") },
-                    modifier = Modifier.clickable { /* Open dedication editor */ }
+                    headlineContent = { Text("Default Dedication") },
+                    supportingContent = { Text(if (customDedication != null) "Custom" else "Traditional") },
+                    modifier = Modifier.clickable { 
+                        dedicationEditorText = customDedication ?: UserPreferences.DEFAULT_DEDICATION_TEXT
+                        showDedicationEditor = true 
+                    }
                 )
 
                 // Show counter
@@ -410,6 +422,39 @@ fun SettingsScreen(
                             }
                         )
                     }
+                )
+
+                // Time Goals
+                ListItem(
+                    headlineContent = { Text("Session Time Goal") },
+                    supportingContent = { Text(if (sessionTimeGoalSeconds > 0) "${sessionTimeGoalSeconds / 60} minutes" else "None") }
+                )
+                Slider(
+                    value = (sessionTimeGoalSeconds / 60f).coerceIn(0f, 60f),
+                    onValueChange = {
+                        scope.launch { viewModel.setSessionTimeGoal(it.toLong() * 60) }
+                    },
+                    valueRange = 0f..60f,
+                    steps = 59,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                )
+
+                ListItem(
+                    headlineContent = { Text("Daily Time Goal") },
+                    supportingContent = { Text(if (dailyTimeGoalSeconds > 0) "${dailyTimeGoalSeconds / 60} minutes" else "None") }
+                )
+                Slider(
+                    value = (dailyTimeGoalSeconds / 60f).coerceIn(0f, 120f),
+                    onValueChange = {
+                        scope.launch { viewModel.setDailyTimeGoal(it.toLong() * 60) }
+                    },
+                    valueRange = 0f..120f,
+                    steps = 119,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
                 )
 
                 // Milestone notifications
@@ -458,6 +503,50 @@ fun SettingsScreen(
                         )
                     }
                 }
+
+                // Number Format
+                val numberFormatStyle by userPreferences.numberFormatStyle.collectAsState(initial = com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD)
+                ListItem(
+                    headlineContent = { Text("Number Format") },
+                    supportingContent = { Text(numberFormatStyle.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }) },
+                    modifier = Modifier.clickable { showNumberFormatDropdown = true }
+                )
+                DropdownMenu(
+                    expanded = showNumberFormatDropdown,
+                    onDismissRequest = { showNumberFormatDropdown = false }
+                ) {
+                    com.prayerwheel.app.data.datastore.NumberFormatStyle.entries.forEach { style ->
+                        DropdownMenuItem(
+                            text = { Text(style.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }) },
+                            onClick = {
+                                viewModel.setNumberFormatStyle(style)
+                                showNumberFormatDropdown = false
+                            }
+                        )
+                    }
+                }
+
+                // Number Notation
+                val numberNotation by userPreferences.numberNotation.collectAsState(initial = com.prayerwheel.app.data.datastore.NumberNotation.STANDARD)
+                ListItem(
+                    headlineContent = { Text("Number Notation") },
+                    supportingContent = { 
+                        Text(
+                            when (numberNotation) {
+                                com.prayerwheel.app.data.datastore.NumberNotation.STANDARD -> "Standard (K/M/B/T)"
+                                com.prayerwheel.app.data.datastore.NumberNotation.EXTENDED -> "Extended (aa/ab/ac...)"
+                            }
+                        )
+                    },
+                    modifier = Modifier.clickable { 
+                        // Toggle between STANDARD and EXTENDED
+                        val newNotation = when (numberNotation) {
+                            com.prayerwheel.app.data.datastore.NumberNotation.STANDARD -> com.prayerwheel.app.data.datastore.NumberNotation.EXTENDED
+                            com.prayerwheel.app.data.datastore.NumberNotation.EXTENDED -> com.prayerwheel.app.data.datastore.NumberNotation.STANDARD
+                        }
+                        scope.launch { userPreferences.setNumberNotation(newNotation) }
+                    }
+                )
 
                 // Keep screen on
                 ListItem(
@@ -565,6 +654,42 @@ fun SettingsScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { showResetDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+        
+        // Dedication editor dialog
+        if (showDedicationEditor) {
+            AlertDialog(
+                onDismissRequest = { showDedicationEditor = false },
+                title = { Text("Default Dedication") },
+                text = {
+                    OutlinedTextField(
+                        value = dedicationEditorText,
+                        onValueChange = { dedicationEditorText = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(150.dp),
+                        maxLines = 5,
+                        placeholder = { Text("Enter your dedication text...") }
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                userPreferences.setCustomDedication(dedicationEditorText.ifBlank { null })
+                            }
+                            showDedicationEditor = false
+                        }
+                    ) {
+                        Text("Save")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDedicationEditor = false }) {
                         Text("Cancel")
                     }
                 }

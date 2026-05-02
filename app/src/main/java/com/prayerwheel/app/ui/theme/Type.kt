@@ -6,6 +6,15 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
+/**
+ * Tibetan font family for displaying Tibetan script.
+ * Uses Serif as fallback when Jomolhari font is not available.
+ * To add Jomolhari font: download jomolhari.ttf and place in res/font/ directory,
+ * then change TibetanFallback to use FontFamily("jomolhari", fallback = FontFamily.Serif)
+ */
+val TibetanFont = FontFamily.Serif  // Placeholder - will use custom font when available
+val TibetanFallback = FontFamily.Serif
+
 val Typography = Typography(
     displayLarge = TextStyle(
         fontFamily = FontFamily.Serif,

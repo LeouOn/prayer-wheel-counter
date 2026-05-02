@@ -14,14 +14,20 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.prayerwheel.app.data.datastore.SpinMode
 import com.prayerwheel.app.data.datastore.UserPreferences
+import com.prayerwheel.app.data.datastore.ViewMode
+import com.prayerwheel.app.data.datastore.NumberFormatStyle
+import com.prayerwheel.app.data.datastore.NumberNotation
 import com.prayerwheel.app.data.db.dao.LifetimeStatsDao
 import com.prayerwheel.app.data.db.dao.SessionDao
 import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.data.model.Mantra
 import com.prayerwheel.app.data.model.Mantras
+import com.prayerwheel.app.data.model.SavedWheel
 import com.prayerwheel.app.data.model.WheelSkin
 import com.prayerwheel.app.data.model.WheelSkins
 import com.prayerwheel.app.data.model.Session
+import com.prayerwheel.app.notification.SessionNotificationService
+import com.prayerwheel.app.notification.SessionNotificationReceiver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -47,17 +53,21 @@ class WheelViewModel(
     private val lifetimeStatsDao: LifetimeStatsDao,
     private val sessionDao: SessionDao,
     private val userPreferences: UserPreferences,
-    private val vibrator: Vibrator
+    private val vibrator: Vibrator,
+    private val appContext: Context
 ) : ViewModel() {
 
     companion object {
-        private const val FRICTION_COEFFICIENT = 0.02f
+        private const val FRICTION_COEFFICIENT = 0.008f
         private const val TWO_HANDED_FRICTION = 0.0001f
         private const val STOP_THRESHOLD = 0.001f
         private const val TWO_PI = 2f * PI.toFloat()
         private const val SESSION_STOP_DELAY_MS = 30000L
         private const val SESSION_NEW_THRESHOLD_MS = 300000L // 5 minutes
         private const val ANIMATION_FRAME_TIME_MS = 16L
+        private const val FLICK_VELOCITY_MULTIPLIER = 1.5f
+        private const val MAX_ANGULAR_VELOCITY = 75f
+        private const val COUNTER_CLOCKWISE_REMINDER_DELAY_MS = 3000L
 
         // Haptic feedback durations in milliseconds
         private const val HAPTIC_TICK_DURATION = 5L
@@ -213,10 +223,16 @@ class WheelViewModel(
     val weightAngle: StateFlow<Float> = _weightAngle.asStateFlow()
 
     /**
-     * Session goal for this session.
+     * Session goal for this session (mantras).
      */
     private val _sessionGoal = MutableStateFlow(0L)
     val sessionGoal: StateFlow<Long> = _sessionGoal.asStateFlow()
+
+    /**
+     * Session time goal in seconds.
+     */
+    private val _sessionTimeGoalSeconds = MutableStateFlow(0L)
+    val sessionTimeGoalSeconds: StateFlow<Long> = _sessionTimeGoalSeconds.asStateFlow()
 
     /**
      * Daily mantra goal.
@@ -235,6 +251,111 @@ class WheelViewModel(
      */
     private val _sendLightActive = MutableStateFlow(false)
     val sendLightActive: StateFlow<Boolean> = _sendLightActive.asStateFlow()
+
+    /**
+     * Whether to show counter-clockwise reminder.
+     */
+    private val _showCounterClockwiseReminder = MutableStateFlow(false)
+    val showCounterClockwiseReminder: StateFlow<Boolean> = _showCounterClockwiseReminder.asStateFlow()
+    private var lastCounterClockwiseReminderTime = 0L
+
+    /**
+     * Whether counter-clockwise rotation is enabled by user.
+     */
+    private val _counterClockwiseEnabled = MutableStateFlow(false)
+    val counterClockwiseEnabled: StateFlow<Boolean> = _counterClockwiseEnabled.asStateFlow()
+
+    /**
+     * Number formatting style.
+     */
+    private val _numberFormatStyle = MutableStateFlow(NumberFormatStyle.STANDARD)
+    val numberFormatStyle: StateFlow<NumberFormatStyle> = _numberFormatStyle.asStateFlow()
+
+    /**
+     * Number notation style (Standard vs Extended).
+     */
+    private val _numberNotation = MutableStateFlow(NumberNotation.STANDARD)
+    val numberNotation: StateFlow<NumberNotation> = _numberNotation.asStateFlow()
+
+    /**
+     * Current view mode for the prayer wheel display.
+     */
+    private val _viewMode = MutableStateFlow(ViewMode.SIDE_VIEW)
+    val viewMode: StateFlow<ViewMode> = _viewMode.asStateFlow()
+
+    /**
+     * Star particles for visual effects.
+     */
+    private val _starParticles = MutableStateFlow<List<StarParticle>>(emptyList())
+    val starParticles: StateFlow<List<StarParticle>> = _starParticles.asStateFlow()
+
+    /**
+     * Saved wheel profiles.
+     */
+    private val _savedWheels = MutableStateFlow<List<SavedWheel>>(emptyList())
+    val savedWheels: StateFlow<List<SavedWheel>> = _savedWheels.asStateFlow()
+
+    /**
+     * Whether auto-spin toggle is enabled.
+     */
+    private val _autoSpinEnabled = MutableStateFlow(false)
+    val autoSpinEnabled: StateFlow<Boolean> = _autoSpinEnabled.asStateFlow()
+
+    /**
+     * Whether two-handed toggle is enabled.
+     */
+    private val _twoHandedEnabled = MutableStateFlow(false)
+    val twoHandedEnabled: StateFlow<Boolean> = _twoHandedEnabled.asStateFlow()
+
+    /**
+     * Left wheel angular velocity (for dual wheel mode).
+     */
+    private val _leftAngularVelocity = MutableStateFlow(0f)
+    val leftAngularVelocity: StateFlow<Float> = _leftAngularVelocity.asStateFlow()
+
+    /**
+     * Right wheel angular velocity (for dual wheel mode).
+     */
+    private val _rightAngularVelocity = MutableStateFlow(0f)
+    val rightAngularVelocity: StateFlow<Float> = _rightAngularVelocity.asStateFlow()
+
+    /**
+     * Left wheel rotation angle (for dual wheel mode).
+     */
+    private val _leftRotationAngle = MutableStateFlow(0f)
+    val leftRotationAngle: StateFlow<Float> = _leftRotationAngle.asStateFlow()
+
+    /**
+     * Right wheel rotation angle (for dual wheel mode).
+     */
+    private val _rightRotationAngle = MutableStateFlow(0f)
+    val rightRotationAngle: StateFlow<Float> = _rightRotationAngle.asStateFlow()
+
+    /**
+     * Left wheel rotation count (for dual wheel mode).
+     */
+    private val _leftRotationCount = MutableStateFlow(0L)
+    val leftRotationCount: StateFlow<Long> = _leftRotationCount.asStateFlow()
+
+    /**
+     * Right wheel rotation count (for dual wheel mode).
+     */
+    private val _rightRotationCount = MutableStateFlow(0L)
+    val rightRotationCount: StateFlow<Long> = _rightRotationCount.asStateFlow()
+
+    /**
+     * Data class for star particle effects.
+     */
+    data class StarParticle(
+        val id: Int,
+        val x: Float,
+        val y: Float,
+        val size: Float,
+        val alpha: Float,
+        val colorIndex: Int,
+        val velocityY: Float,
+        val lifetime: Float
+    )
 
     // Physics state
     private var lastFrameTime = 0L
@@ -256,6 +377,9 @@ class WheelViewModel(
     private var sessionId: Long? = null
     private var lastSessionEndTime: Long? = null
     private var pendingDedicationSession: PendingSession? = null
+
+    // Notification service active flag
+    private var notificationActive = false
 
     private data class PendingSession(
         val startTime: Long,
@@ -318,6 +442,11 @@ class WheelViewModel(
             }
         }
         viewModelScope.launch {
+            userPreferences.sessionTimeGoalSeconds.collect { goal ->
+                _sessionTimeGoalSeconds.value = goal
+            }
+        }
+        viewModelScope.launch {
             userPreferences.dailyMantraGoal.collect { goal ->
                 _dailyMantraGoal.value = goal
             }
@@ -325,6 +454,41 @@ class WheelViewModel(
         viewModelScope.launch {
             userPreferences.selectedSkin.collect { skinId ->
                 _selectedSkin.value = WheelSkins.byId(skinId) ?: WheelSkins.default()
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.counterClockwiseEnabled.collect { enabled ->
+                _counterClockwiseEnabled.value = enabled
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.viewMode.collect { mode ->
+                _viewMode.value = mode
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.numberFormatStyle.collect { style ->
+                _numberFormatStyle.value = style
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.numberNotation.collect { notation ->
+                _numberNotation.value = notation
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.savedWheels.collect { wheels ->
+                _savedWheels.value = wheels
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.autoSpinEnabled.collect { enabled ->
+                _autoSpinEnabled.value = enabled
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.twoHandedEnabled.collect { enabled ->
+                _twoHandedEnabled.value = enabled
             }
         }
         loadLifetimeStats()
@@ -337,17 +501,17 @@ class WheelViewModel(
         viewModelScope.launch {
             _spinMode.value = mode
             userPreferences.setSpinMode(mode)
-            
+
             // If switching to auto-spin, trigger haptic feedback
             if (mode == SpinMode.AUTO_SPIN) {
                 triggerHapticTick()
             }
-            
+
             // If switching away from two-handed, disengage
             if (mode != SpinMode.TWO_HANDED) {
                 setTwoHandedEngaged(false)
             }
-            
+
             // If switching away from auto-spin, stop it
             if (mode != SpinMode.AUTO_SPIN) {
                 stopAutoSpin()
@@ -362,7 +526,7 @@ class WheelViewModel(
         viewModelScope.launch {
             _autoSpinRpm.value = rpm.coerceIn(1, 120)
             userPreferences.setAutoSpinRpm(rpm)
-            
+
             // If auto-spin is active, restart it with new RPM
             if (_autoSpinActive.value && _spinMode.value == SpinMode.AUTO_SPIN) {
                 startAutoSpin()
@@ -402,14 +566,14 @@ class WheelViewModel(
      */
     fun startAutoSpin() {
         if (_spinMode.value != SpinMode.AUTO_SPIN) return
-        
+
         _autoSpinActive.value = true
         val rpm = _autoSpinRpm.value
         // Convert RPM to angular velocity (radians per second)
         // RPM * 2π / 60 = rad/s
         val targetOmega = rpm * 2 * PI.toFloat() / 60f
         _angularVelocity.value = targetOmega
-        
+
         startSessionIfNeeded()
         startPhysicsLoop()
     }
@@ -427,15 +591,69 @@ class WheelViewModel(
     fun onDragMove(x: Float, y: Float, centerX: Float, centerY: Float, timestamp: Long) {
         val angle = atan2(y - centerY, x - centerX)
         val angularDiff = calculateAngularChange(angle)
-        _rotationAngle.value += angularDiff
+
+        // Check if dual wheels mode is enabled
+        if (_twoHandedEnabled.value) {
+            // In dual mode, apply drag based on which side of screen is touched
+            if (x < centerX) {
+                // Left wheel
+                _leftRotationAngle.value += angularDiff
+                checkLeftRotationCompletion(angularDiff)
+            } else {
+                // Right wheel
+                _rightRotationAngle.value += angularDiff
+                checkRightRotationCompletion(angularDiff)
+            }
+        } else {
+            _rotationAngle.value += angularDiff
+            checkRotationCompletion(angularDiff)
+        }
 
         dragHistory.add(DragEvent(angle, timestamp))
         // Keep only last 5 events for velocity calculation
         while (dragHistory.size > 5) {
             dragHistory.removeAt(0)
         }
-        // Check for rotation completion during drag too
-        checkRotationCompletion(angularDiff)
+    }
+
+    /**
+     * Checks rotation completion for the left wheel.
+     */
+    private fun checkLeftRotationCompletion(angularDiff: Float) {
+        val totalRotation = _leftRotationAngle.value
+        val newRevolutions = (totalRotation / TWO_PI).toLong()
+        val oldRevolutions = ((totalRotation - angularDiff) / TWO_PI).toLong()
+        if (newRevolutions > oldRevolutions) {
+            _leftRotationCount.value += (newRevolutions - oldRevolutions)
+            onDualWheelRotationComplete(newRevolutions - oldRevolutions, isLeft = true)
+        }
+    }
+
+    /**
+     * Checks rotation completion for the right wheel.
+     */
+    private fun checkRightRotationCompletion(angularDiff: Float) {
+        val totalRotation = _rightRotationAngle.value
+        val newRevolutions = (totalRotation / TWO_PI).toLong()
+        val oldRevolutions = ((totalRotation - angularDiff) / TWO_PI).toLong()
+        if (newRevolutions > oldRevolutions) {
+            _rightRotationCount.value += (newRevolutions - oldRevolutions)
+            onDualWheelRotationComplete(newRevolutions - oldRevolutions, isLeft = false)
+        }
+    }
+
+    /**
+     * Handles rotation completion for dual wheel mode.
+     * Both wheels contribute to the same session mantras.
+     */
+    private fun onDualWheelRotationComplete(count: Long, isLeft: Boolean) {
+        if (isLeft) {
+            currentSessionRotations += count
+        } else {
+            currentSessionRotations += count
+        }
+        updateSessionMantras()
+        triggerHapticTick()
     }
 
     /**
@@ -456,7 +674,7 @@ class WheelViewModel(
             val eventsToConsider = dragHistory.takeLast(5)
             var totalWeightedAngularDiff = 0f
             var totalWeight = 0f
-            
+
             eventsToConsider.forEachIndexed { index, event ->
                 val weight = (index + 1).toFloat() // More recent events have higher weight
                 if (index > 0) {
@@ -474,11 +692,27 @@ class WheelViewModel(
             }
 
             if (totalWeight > 0) {
-                val velocity = totalWeightedAngularDiff / totalWeight
-                // Only apply clockwise (positive) velocity, ignore counter-clockwise
-                if (velocity > 0) {
-                    _angularVelocity.value = velocity.coerceIn(0f, 50f)
+                var velocity = totalWeightedAngularDiff / totalWeight
+
+                // Apply flick velocity multiplier for stronger spinning
+                velocity *= FLICK_VELOCITY_MULTIPLIER
+
+                // Check for counter-clockwise motion
+                if (velocity < 0) {
+                    // Counter-clockwise detected
+                    if (!_counterClockwiseEnabled.value) {
+                        // Show reminder but allow the motion
+                        showCounterClockwiseReminder()
+                    }
+                    // Allow counter-clockwise with reduced velocity or block based on setting
+                    // For now, we let it spin counter-clockwise but at reduced sensitivity
+                    velocity = velocity.coerceIn(-MAX_ANGULAR_VELOCITY, 0f)
+                } else {
+                    // Clockwise - apply higher cap
+                    velocity = velocity.coerceIn(0f, MAX_ANGULAR_VELOCITY)
                 }
+
+                _angularVelocity.value = velocity
             }
         }
 
@@ -487,12 +721,71 @@ class WheelViewModel(
     }
 
     /**
+     * Shows the counter-clockwise reminder and auto-dismisses after 3 seconds.
+     */
+    private fun showCounterClockwiseReminder() {
+        val now = System.currentTimeMillis()
+        if (now - lastCounterClockwiseReminderTime < 60_000L) return // 1 minute cooldown
+
+        lastCounterClockwiseReminderTime = now
+        _showCounterClockwiseReminder.value = true
+        viewModelScope.launch {
+            delay(COUNTER_CLOCKWISE_REMINDER_DELAY_MS)
+            _showCounterClockwiseReminder.value = false
+        }
+    }
+
+    /**
+     * Dismisses the counter-clockwise reminder.
+     */
+    fun dismissCounterClockwiseReminder() {
+        _showCounterClockwiseReminder.value = false
+    }
+
+    /**
+     * Whether the session is paused (for notification state).
+     */
+    private val _isPaused = MutableStateFlow(false)
+    val isPaused: StateFlow<Boolean> = _isPaused.asStateFlow()
+
+    /**
      * Pauses the wheel immediately (long press).
      */
     fun pauseWheel() {
         _angularVelocity.value = 0f
         stopPhysicsLoop()
+        _isPaused.value = true
         triggerHapticPause()
+        // Update notification to reflect paused state
+        if (notificationActive) {
+            SessionNotificationService.update(
+                _sessionDurationSeconds.value,
+                _sessionMantras.value,
+                paused = true
+            )
+        }
+    }
+
+    /**
+     * Resumes the wheel from a paused state.
+     */
+    fun resumeWheel() {
+        _isPaused.value = false
+        // Restart physics if needed (re-engage spin)
+        if (_spinMode.value == SpinMode.AUTO_SPIN || _autoSpinEnabled.value) {
+            startAutoSpin()
+        } else {
+            // Give a small initial velocity so the wheel can be flicked again
+            startPhysicsLoop()
+        }
+        // Update notification to reflect resumed state
+        if (notificationActive) {
+            SessionNotificationService.update(
+                _sessionDurationSeconds.value,
+                _sessionMantras.value,
+                paused = false
+            )
+        }
     }
 
     /**
@@ -553,6 +846,25 @@ class WheelViewModel(
     }
 
     /**
+     * Sets the session time goal in seconds.
+     */
+    fun setSessionTimeGoal(seconds: Long) {
+        viewModelScope.launch {
+            _sessionTimeGoalSeconds.value = seconds
+            userPreferences.setSessionTimeGoalSeconds(seconds)
+        }
+    }
+
+    /**
+     * Sets the daily time goal in seconds.
+     */
+    fun setDailyTimeGoal(seconds: Long) {
+        viewModelScope.launch {
+            userPreferences.setDailyTimeGoalSeconds(seconds)
+        }
+    }
+
+    /**
      * Sets the selected wheel skin.
      */
     fun setSelectedSkin(skin: WheelSkin) {
@@ -560,6 +872,126 @@ class WheelViewModel(
             _selectedSkin.value = skin
             userPreferences.setSelectedSkin(skin.id)
         }
+    }
+
+    /**
+     * Sets the view mode for the prayer wheel display.
+     */
+    fun setViewMode(mode: ViewMode) {
+        viewModelScope.launch {
+            _viewMode.value = mode
+            userPreferences.setViewMode(mode)
+        }
+    }
+
+    /**
+     * Sets the number format style.
+     */
+    fun setNumberFormatStyle(style: NumberFormatStyle) {
+        viewModelScope.launch {
+            _numberFormatStyle.value = style
+            userPreferences.setNumberFormatStyle(style)
+        }
+    }
+
+    /**
+     * Sets the number notation style.
+     */
+    fun setNumberNotation(notation: NumberNotation) {
+        viewModelScope.launch {
+            _numberNotation.value = notation
+            userPreferences.setNumberNotation(notation)
+        }
+    }
+
+    /**
+     * Sets the auto-spin toggle enabled state.
+     */
+    fun setAutoSpinEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            _autoSpinEnabled.value = enabled
+            userPreferences.setAutoSpinEnabled(enabled)
+            if (enabled) {
+                // Immediately start spinning at the set RPM
+                val targetOmega = _autoSpinRpm.value * 2 * PI.toFloat() / 60f
+                _angularVelocity.value = targetOmega
+                startSessionIfNeeded()
+                startPhysicsLoop()
+            } else {
+                stopAutoSpin()
+            }
+        }
+    }
+
+    /**
+     * Sets the two-handed toggle enabled state.
+     */
+    fun setTwoHandedEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            _twoHandedEnabled.value = enabled
+            userPreferences.setTwoHandedEnabled(enabled)
+        }
+    }
+
+    /**
+     * Adds a new saved wheel profile.
+     */
+    fun addSavedWheel(name: String, capacity: Long, mantraId: String) {
+        viewModelScope.launch {
+            val wheel = SavedWheel(
+                id = java.util.UUID.randomUUID().toString(),
+                name = name,
+                capacity = capacity,
+                mantraId = mantraId,
+                skinId = _selectedSkin.value.id,
+                createdAt = System.currentTimeMillis()
+            )
+            userPreferences.addSavedWheel(wheel)
+        }
+    }
+
+    /**
+     * Updates an existing saved wheel profile.
+     */
+    fun updateSavedWheel(wheel: SavedWheel) {
+        viewModelScope.launch {
+            userPreferences.updateSavedWheel(wheel)
+        }
+    }
+
+    /**
+     * Deletes a saved wheel profile.
+     */
+    fun deleteSavedWheel(wheelId: String) {
+        viewModelScope.launch {
+            userPreferences.deleteSavedWheel(wheelId)
+        }
+    }
+
+    /**
+     * Applies a saved wheel configuration (sets capacity and mantra).
+     */
+    fun applySavedWheel(wheel: SavedWheel) {
+        viewModelScope.launch {
+            _mantrasPerRotation.value = wheel.capacity
+            userPreferences.setMantrasPerRotation(wheel.capacity)
+            userPreferences.setSelectedMantra(wheel.mantraId)
+            _currentMantra.value = Mantras.byId(wheel.mantraId) ?: Mantras.OM_MANI_PADME_HUM
+        }
+    }
+
+    /**
+     * Cycles to the next view mode.
+     */
+    fun cycleViewMode() {
+        val nextMode = when (_viewMode.value) {
+            ViewMode.SIDE_VIEW -> ViewMode.TOP_DOWN
+            ViewMode.TOP_DOWN -> ViewMode.ABSTRACT
+            ViewMode.ABSTRACT -> ViewMode.TABLE_TOP
+            ViewMode.TABLE_TOP -> ViewMode.GLOBE
+            ViewMode.GLOBE -> ViewMode.SIDE_VIEW
+        }
+        setViewMode(nextMode)
     }
 
     /**
@@ -594,6 +1026,8 @@ class WheelViewModel(
      * Ends the current session explicitly.
      */
     fun endSession() {
+        stopNotificationService()
+        _isPaused.value = false
         saveSessionWithDedication()
     }
 
@@ -607,19 +1041,19 @@ class WheelViewModel(
                 if (dedication != null && dedication.isNotBlank()) {
                     userPreferences.setCustomDedication(dedication)
                 }
-                
+
                 // Save the session to Room
                 val endedAt = System.currentTimeMillis()
                 val session = createSessionFromPending(pending, endedAt, dedication)
-                
+
                 sessionDao.insert(session)
-                
+
                 // Update lifetime stats (carrying forward spinning time fields)
                 updateLifetimeStats(session)
-                
+
                 lastSessionEndTime = endedAt
             }
-            
+
             pendingDedicationSession = null
             _showDedicationPrompt.value = false
             resetSessionState()
@@ -669,10 +1103,10 @@ class WheelViewModel(
     private fun createSessionFromCurrentState(): Session? {
         val startTime = sessionStartTime ?: return null
         if (currentSessionRotations == 0L) return null
-        
+
         val avgRpm = if (rpmSampleCount > 0) sessionStartRpmSum / rpmSampleCount else 0f
         val endedAt = System.currentTimeMillis()
-        
+
         return Session(
             startedAt = startTime,
             endedAt = endedAt,
@@ -696,7 +1130,7 @@ class WheelViewModel(
     private suspend fun updateLifetimeStats(session: Session) {
         val sessionDurationSeconds = _sessionDurationSeconds.value
         val existing = lifetimeStatsDao.getStats()
-        
+
         val newStats = existing?.copy(
             totalRotations = existing.totalRotations + session.rotationCount,
             totalMantras = existing.totalMantras + session.totalMantras,
@@ -714,15 +1148,15 @@ class WheelViewModel(
             totalSpinningTimeSeconds = sessionDurationSeconds,
             averageSessionDurationSeconds = sessionDurationSeconds
         )
-        
+
         lifetimeStatsDao.upsert(newStats)
     }
 
     private fun startSessionIfNeeded() {
         val now = System.currentTimeMillis()
-        val needsNewSession = sessionStartTime == null || 
+        val needsNewSession = sessionStartTime == null ||
             (lastSessionEndTime != null && now - lastSessionEndTime!! > SESSION_NEW_THRESHOLD_MS)
-        
+
         if (needsNewSession) {
             sessionStartTime = now
             currentSessionRotations = 0L
@@ -732,17 +1166,39 @@ class WheelViewModel(
             _peakRpm.value = 0f
             _averageRpm.value = 0f
             _sessionDurationSeconds.value = 0L
+            _isPaused.value = false
             rpmSamples.clear()
             rpmSampleCount = 0
             sessionStartRpmSum = 0f
-            
+
+            // Start notification service
+            startNotificationService()
+
             // Start session timer
             sessionTimerJob?.cancel()
             sessionTimerJob = viewModelScope.launch {
                 val startTime = now
+                var timeGoalReached = false
                 while (isActive) {
                     _sessionDuration.value = System.currentTimeMillis() - startTime
-                    _sessionDurationSeconds.value = _sessionDuration.value / 1000
+                    val newSeconds = _sessionDuration.value / 1000
+                    _sessionDurationSeconds.value = newSeconds
+
+                    val goalSecs = _sessionTimeGoalSeconds.value
+                    if (goalSecs > 0 && newSeconds >= goalSecs && !timeGoalReached) {
+                        timeGoalReached = true
+                        triggerMilestoneHaptic()
+                    }
+
+                    // Update notification every second with current values
+                    if (notificationActive && !_isPaused.value) {
+                        SessionNotificationService.update(
+                            newSeconds,
+                            _sessionMantras.value,
+                            paused = false
+                        )
+                    }
+
                     delay(SESSION_TIMER_INTERVAL_MS)
                 }
             }
@@ -758,29 +1214,33 @@ class WheelViewModel(
                 val deltaTime = (currentTime - lastFrameTime).coerceAtLeast(1L) / 1000f
                 lastFrameTime = currentTime
 
-                // Determine friction coefficient
-                val frictionCoefficient = when {
-                    _spinMode.value == SpinMode.TWO_HANDED && _twoHandedEngaged.value -> TWO_HANDED_FRICTION
-                    _spinMode.value == SpinMode.AUTO_SPIN && _autoSpinActive.value -> 0f // No friction in auto-spin
-                    else -> _baseFriction.value
+                // Determine friction coefficient based on mode and state
+                val isTwoHandedMode = _spinMode.value == SpinMode.TWO_HANDED ||
+                                     _spinMode.value == SpinMode.TWO_HANDED_AUTO ||
+                                     (_twoHandedEnabled.value && _autoSpinEnabled.value)
+
+                // Calculate velocity - in auto mode we maintain target, otherwise apply friction
+                val currentOmega = _angularVelocity.value
+                val calculatedVelocity = if (_autoSpinEnabled.value && !isTwoHandedMode) {
+                    // Auto-spin mode: maintain constant velocity at target RPM
+                    val targetOmega = _autoSpinRpm.value * 2 * PI.toFloat() / 60f
+                    // Smoothly approach target velocity
+                    currentOmega + (targetOmega - currentOmega) * 0.1f
+                } else {
+                    // Manual or two-handed mode: apply friction decay
+                    val frictionCoefficient = when {
+                        isTwoHandedMode && _twoHandedEngaged.value -> TWO_HANDED_FRICTION
+                        else -> _baseFriction.value
+                    }
+
+                    // Apply friction decay: ω_{t+1} = ω_t × (1 - μ × Δt)
+                    currentOmega * (1f - frictionCoefficient * deltaTime)
                 }
 
-                // Apply friction decay: ω_{t+1} = ω_t × (1 - μ × Δt)
-                val newVelocity = if (frictionCoefficient > 0f) {
-                    _angularVelocity.value * (1f - frictionCoefficient * deltaTime)
-                } else {
-                    // Auto-spin mode: maintain constant velocity
-                    _angularVelocity.value
-                }
-
-                if (abs(newVelocity) < STOP_THRESHOLD && frictionCoefficient > 0f) {
-                    _angularVelocity.value = 0f
-                } else {
-                    _angularVelocity.value = newVelocity
-                }
+                _angularVelocity.value = if (abs(calculatedVelocity) < STOP_THRESHOLD) 0f else calculatedVelocity
 
                 // Update rotation angle
-                val deltaAngle = newVelocity * deltaTime
+                val deltaAngle = calculatedVelocity * deltaTime
                 val oldAngle = _rotationAngle.value
                 val newAngle = oldAngle + deltaAngle
                 _rotationAngle.value = newAngle
@@ -795,24 +1255,24 @@ class WheelViewModel(
                 // Update RPM tracking: RPM = |ω| * 60 / (2π)
                 val currentRpm = abs(_angularVelocity.value) * 60f / TWO_PI
                 _currentRpm.value = currentRpm
-                
+
                 // Calculate weight angle based on centrifugal force
                 // angle = atan(rpm / 30) clamped to 0..80 degrees
                 val targetWeightAngle = (kotlin.math.atan(currentRpm.toDouble() / 30.0) * 180.0 / PI).toFloat()
                     .coerceIn(0f, 80f)
                 // Smooth interpolation toward target angle
                 _weightAngle.value += (targetWeightAngle - _weightAngle.value) * 0.1f
-                
+
                 // Track peak RPM
                 if (currentRpm > _peakRpm.value) {
                     _peakRpm.value = currentRpm
                 }
-                
+
                 // Track samples for average RPM calculation
                 rpmSamples.add(currentRpm)
                 rpmSampleCount++
                 sessionStartRpmSum += currentRpm
-                
+
                 // Update running average RPM
                 if (rpmSampleCount > 0) {
                     _averageRpm.value = sessionStartRpmSum / rpmSampleCount
@@ -920,11 +1380,60 @@ class WheelViewModel(
         _peakRpm.value = 0f
         _averageRpm.value = 0f
         _sessionDurationSeconds.value = 0L
+        _isPaused.value = false
         rpmSamples.clear()
         rpmSampleCount = 0
         sessionStartRpmSum = 0f
         sessionTimerJob?.cancel()
         sessionTimerJob = null
+        stopNotificationService()
+    }
+
+    // ── Notification service helpers ────────────────────────────────────────
+
+    /**
+     * Starts the foreground notification service for the active session.
+     */
+    private fun startNotificationService() {
+        if (notificationActive) return
+        notificationActive = true
+
+        // Wire up the broadcast receiver callback so notification action
+        // buttons (Pause/Resume/Close) trigger ViewModel methods
+        SessionNotificationReceiver.callback = object : SessionNotificationReceiver.SessionNotificationCallback {
+            override fun onPauseSession() {
+                viewModelScope.launch {
+                    pauseWheel()
+                }
+            }
+            override fun onResumeSession() {
+                viewModelScope.launch {
+                    resumeWheel()
+                }
+            }
+            override fun onCloseSession() {
+                viewModelScope.launch {
+                    endSession()
+                }
+            }
+        }
+
+        SessionNotificationService.start(
+            appContext,
+            _sessionDurationSeconds.value,
+            _sessionMantras.value,
+            _isPaused.value
+        )
+    }
+
+    /**
+     * Stops the foreground notification service.
+     */
+    private fun stopNotificationService() {
+        if (!notificationActive) return
+        notificationActive = false
+        SessionNotificationReceiver.callback = null
+        SessionNotificationService.stop(appContext)
     }
 
     private fun loadLifetimeStats() {
@@ -1029,11 +1538,12 @@ class WheelViewModel(
         private val lifetimeStatsDao: LifetimeStatsDao,
         private val sessionDao: SessionDao,
         private val userPreferences: UserPreferences,
-        private val vibrator: Vibrator
+        private val vibrator: Vibrator,
+        private val appContext: Context
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return WheelViewModel(lifetimeStatsDao, sessionDao, userPreferences, vibrator) as T
+            return WheelViewModel(lifetimeStatsDao, sessionDao, userPreferences, vibrator, appContext) as T
         }
     }
 }

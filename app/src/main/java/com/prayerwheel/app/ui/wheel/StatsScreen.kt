@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -54,6 +55,7 @@ fun StatsScreen(
     allTimeStats: TimeStats?,
     recentSessions: List<Session>,
     onNavigateBack: () -> Unit,
+    onNavigateToCalendar: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Scaffold(
@@ -70,6 +72,14 @@ fun StatsScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onNavigateToCalendar) {
+                        Icon(
+                            imageVector = Icons.Default.DateRange,
+                            contentDescription = "Calendar"
                         )
                     }
                 },

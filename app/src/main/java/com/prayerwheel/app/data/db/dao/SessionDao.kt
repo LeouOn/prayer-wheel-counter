@@ -49,6 +49,9 @@ interface SessionDao {
 
     @Query("SELECT * FROM sessions WHERE startedAt >= :sinceTimestamp ORDER BY startedAt DESC")
     fun getSessionsSince(sinceTimestamp: Long): Flow<List<Session>>
+
+    @Query("SELECT * FROM sessions WHERE startedAt >= :startDate AND startedAt <= :endDate ORDER BY startedAt ASC")
+    fun getSessionsBetween(startDate: Long, endDate: Long): Flow<List<Session>>
 }
 
 /**

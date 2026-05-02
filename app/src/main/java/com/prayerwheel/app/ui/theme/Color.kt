@@ -55,3 +55,17 @@ val NeutralVariant50 = Color(0xFF7A7368)
 val NeutralVariant60 = Color(0xFF948C80)
 val NeutralVariant80 = Color(0xFFC8BEB0)
 val NeutralVariant90 = Color(0xFFE0D8CC)
+
+// Rainbow colors for spiritual effects
+val RainbowRed = Color(0xFFFF0000)
+val RainbowOrange = Color(0xFFFF7F00)
+val RainbowYellow = Color(0xFFFFFF00)
+val RainbowGreen = Color(0xFF00FF00)
+val RainbowBlue = Color(0xFF0000FF)
+val RainbowIndigo = Color(0xFF4B0082)
+val RainbowViolet = Color(0xFF8B00FF)
+
+// Star/sparkle colors
+val StarGold = Color(0xFFFFD700)
+val StarWhite = Color(0xFFFFFAFA)
+val StarLightBlue = Color(0xFFE3F2FD)

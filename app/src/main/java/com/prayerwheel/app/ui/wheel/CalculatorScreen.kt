@@ -339,6 +339,11 @@ fun CalculatorScreen(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
+                            text = "(${formatWithCommas(projectedTotal)})",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                        Text(
                             text = "over ${selectedPeriod.label.lowercase()}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -500,9 +505,59 @@ private fun buildComparisons(totalMantras: BigInteger): List<String> {
 }
 
 /**
- * Formats a BigInteger for display.
+ * Formats a BigInteger for display with proper notation (no scientific notation).
+ * Shows abbreviated form (e.g., 1.5M, 12.3B, 1.2T) with full number below.
  */
 private fun formatNumber(number: BigInteger): String {
+    return when {
+        number >= BigInteger.valueOf(1_000_000_000_000) -> {
+            val trillions = number.divide(BigInteger.valueOf(1_000_000_000_000))
+            val remainder = number.mod(BigInteger.valueOf(1_000_000_000_000))
+            if (remainder == BigInteger.ZERO) {
+                "${formatWithCommas(trillions)} T"
+            } else {
+                val decimal = (remainder.toDouble() / 1_000_000_000_000.0 * 100).toInt()
+                "${formatWithCommas(trillions)}.${String.format("%02d", decimal)} T"
+            }
+        }
+        number >= BigInteger.valueOf(1_000_000_000) -> {
+            val billions = number.divide(BigInteger.valueOf(1_000_000_000))
+            val remainder = number.mod(BigInteger.valueOf(1_000_000_000))
+            if (remainder == BigInteger.ZERO) {
+                "${formatWithCommas(billions)} B"
+            } else {
+                val decimal = (remainder.toDouble() / 1_000_000_000.0 * 100).toInt()
+                "${formatWithCommas(billions)}.${String.format("%02d", decimal)} B"
+            }
+        }
+        number >= BigInteger.valueOf(1_000_000) -> {
+            val millions = number.divide(BigInteger.valueOf(1_000_000))
+            val remainder = number.mod(BigInteger.valueOf(1_000_000))
+            if (remainder == BigInteger.ZERO) {
+                "${formatWithCommas(millions)} M"
+            } else {
+                val decimal = (remainder.toDouble() / 1_000_000.0 * 100).toInt()
+                "${formatWithCommas(millions)}.${String.format("%02d", decimal)} M"
+            }
+        }
+        number >= BigInteger.valueOf(1_000) -> {
+            val thousands = number.divide(BigInteger.valueOf(1_000))
+            val remainder = number.mod(BigInteger.valueOf(1_000))
+            if (remainder == BigInteger.ZERO) {
+                "${formatWithCommas(thousands)} K"
+            } else {
+                val decimal = (remainder.toDouble() / 1_000.0 * 100).toInt()
+                "${formatWithCommas(thousands)}.${String.format("%02d", decimal)} K"
+            }
+        }
+        else -> formatWithCommas(number)
+    }
+}
+
+/**
+ * Formats a BigInteger with locale-aware comma separators.
+ */
+private fun formatWithCommas(number: BigInteger): String {
     return NumberFormat.getNumberInstance(Locale.getDefault()).format(number)
 }
 
