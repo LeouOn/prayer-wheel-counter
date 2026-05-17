@@ -40,7 +40,7 @@ class PrayerWheelApp : Application() {
             AppDatabase::class.java,
             "prayer_wheel_database"
         )
-            .fallbackToDestructiveMigration()
+            .fallbackToDestructiveMigration(false)
             .build()
 
         // Initialize DataStore preferences

@@ -15,6 +15,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.rememberNavController
 import com.prayerwheel.app.ui.navigation.PrayerWheelNavHost
@@ -24,18 +25,16 @@ import com.prayerwheel.app.viewmodel.WheelViewModel
 
 class MainActivity : ComponentActivity() {
 
-    /**
-     * Launcher for requesting notification permission on Android 13+.
-     */
+    private var wheelViewModel: WheelViewModel? = null
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* No callback needed — permission result is handled silently */ }
+    ) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Request notification permission on Android 13+ (needed for foreground service)
         requestNotificationPermissionIfNeeded()
 
         val app = application as PrayerWheelApp
@@ -64,6 +63,7 @@ class MainActivity : ComponentActivity() {
                             appContext = applicationContext
                         )
                     )
+                    wheelViewModel = viewModel
 
                     val navController = rememberNavController()
 
@@ -76,6 +76,23 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        wheelViewModel?.setAppInForeground(false)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        wheelViewModel?.setAppInForeground(true)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (isFinishing) {
+            wheelViewModel = null
         }
     }
 

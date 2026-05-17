@@ -20,7 +20,6 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.math.BigInteger
-import java.text.NumberFormat
 import java.util.Locale
 
 /**
@@ -172,50 +171,7 @@ private fun AnimatedMantraCount(
  * Formats a BigInteger with locale-aware thousand separators and custom styles.
  */
 private fun formatBigNumber(value: BigInteger, style: com.prayerwheel.app.data.datastore.NumberFormatStyle): String {
-    return when (style) {
-        com.prayerwheel.app.data.datastore.NumberFormatStyle.EXACT -> {
-            NumberFormat.getNumberInstance(Locale.getDefault()).format(value)
-        }
-        com.prayerwheel.app.data.datastore.NumberFormatStyle.SCIENTIFIC -> {
-            if (value > BigInteger.valueOf(999_999L)) {
-                val str = value.toString()
-                val d = str[0] + "." + str.substring(1, 3)
-                "$d x 10^${str.length - 1}"
-            } else {
-                NumberFormat.getNumberInstance(Locale.getDefault()).format(value)
-            }
-        }
-        com.prayerwheel.app.data.datastore.NumberFormatStyle.LONG_FORM -> {
-            if (value >= BigInteger.valueOf(1_000_000_000L)) {
-                val b = value.divide(BigInteger.valueOf(1_000_000_000L))
-                val m = value.remainder(BigInteger.valueOf(1_000_000_000L)).divide(BigInteger.valueOf(1_000_000L))
-                "$b Billion $m Million".replace(" 0 Million", "").trim()
-            } else if (value >= BigInteger.valueOf(1_000_000L)) {
-                val m = value.divide(BigInteger.valueOf(1_000_000L))
-                val k = value.remainder(BigInteger.valueOf(1_000_000L)).divide(BigInteger.valueOf(1_000L))
-                "$m Million $k Thousand".replace(" 0 Thousand", "").trim()
-            } else if (value >= BigInteger.valueOf(1_000L)) {
-                val k = value.divide(BigInteger.valueOf(1_000L))
-                "$k Thousand"
-            } else {
-                NumberFormat.getNumberInstance(Locale.getDefault()).format(value)
-            }
-        }
-        com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD -> {
-            if (value >= BigInteger.valueOf(1_000_000_000L)) {
-                val b = value.divide(BigInteger.valueOf(1_000_000_000L))
-                "${b}B"
-            } else if (value >= BigInteger.valueOf(1_000_000L)) {
-                val m = value.divide(BigInteger.valueOf(1_000_000L))
-                "${m}M"
-            } else if (value >= BigInteger.valueOf(1_000L)) {
-                val k = value.divide(BigInteger.valueOf(1_000L))
-                "${k}K"
-            } else {
-                NumberFormat.getNumberInstance(Locale.getDefault()).format(value)
-            }
-        }
-    }
+    return NumberFormatter.formatWithStyle(value, style)
 }
 
 /**

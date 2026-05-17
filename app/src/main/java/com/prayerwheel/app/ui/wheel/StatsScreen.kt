@@ -37,6 +37,7 @@ import com.prayerwheel.app.data.model.Mantra
 import com.prayerwheel.app.data.model.MantraStats
 import com.prayerwheel.app.data.model.Mantras
 import com.prayerwheel.app.data.model.Session
+import com.prayerwheel.app.ui.components.NumberFormatter
 import java.math.BigInteger
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -440,24 +441,14 @@ private fun StatItem(label: String, value: String) {
  * Formats a number with K/M/B suffixes for large values.
  */
 private fun formatNumber(number: Long): String {
-    return when {
-        number >= 1_000_000_000 -> "${number / 1_000_000_000}B"
-        number >= 1_000_000 -> "${number / 1_000_000}M"
-        number >= 1_000 -> "${number / 1_000}K"
-        else -> number.toString()
-    }
+    return NumberFormatter.formatLong(number)
 }
 
 /**
  * Formats a BigInteger for display.
  */
 private fun formatBigNumber(mantras: BigInteger): String {
-    return when {
-        mantras >= BigInteger("1000000000") -> "${mantras.divide(BigInteger("1000000000"))}B"
-        mantras >= BigInteger("1000000") -> "${mantras.divide(BigInteger("1000000"))}M"
-        mantras >= BigInteger("1000") -> "${mantras.divide(BigInteger("1000"))}K"
-        else -> mantras.toString()
-    }
+    return NumberFormatter.format(mantras)
 }
 
 /**

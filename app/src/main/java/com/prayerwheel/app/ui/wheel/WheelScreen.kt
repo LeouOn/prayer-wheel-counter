@@ -36,7 +36,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -104,6 +104,7 @@ import com.prayerwheel.app.ui.components.CapacitySlider
 import com.prayerwheel.app.ui.components.CounterDisplay
 import com.prayerwheel.app.ui.components.IntentionDialog
 import com.prayerwheel.app.ui.components.MantraSelector
+import com.prayerwheel.app.ui.components.NumberFormatter
 import com.prayerwheel.app.ui.components.SavedWheelsManager
 import com.prayerwheel.app.ui.components.ShareIntentionDialog
 import com.prayerwheel.app.ui.components.SpinModeSelector
@@ -277,7 +278,7 @@ fun WheelScreen(
                         }
                         IconButton(onClick = onNavigateToStats) {
                             Icon(
-                                imageVector = Icons.Default.List,
+                                imageVector = Icons.AutoMirrored.Filled.List,
                                 contentDescription = "Statistics"
                             )
                         }
@@ -829,34 +830,7 @@ private fun GoalProgressDisplay(
  * Formats a BigInteger for display.
  */
 private fun formatNumber(number: Long, style: com.prayerwheel.app.data.datastore.NumberFormatStyle = com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD): String {
-    return when (style) {
-        com.prayerwheel.app.data.datastore.NumberFormatStyle.EXACT -> {
-            NumberFormat.getNumberInstance(Locale.getDefault()).format(number)
-        }
-        com.prayerwheel.app.data.datastore.NumberFormatStyle.SCIENTIFIC -> {
-            if (number >= 1_000_000) {
-                String.format(Locale.getDefault(), "%.2e", number.toDouble())
-            } else {
-                NumberFormat.getNumberInstance(Locale.getDefault()).format(number)
-            }
-        }
-        com.prayerwheel.app.data.datastore.NumberFormatStyle.LONG_FORM -> {
-            when {
-                number >= 1_000_000_000 -> "${number / 1_000_000_000} Billion ${ (number % 1_000_000_000) / 1_000_000 } Million".replace(" 0 Million", "")
-                number >= 1_000_000 -> "${number / 1_000_000} Million ${ (number % 1_000_000) / 1_000 } Thousand".replace(" 0 Thousand", "")
-                number >= 1_000 -> "${number / 1_000} Thousand"
-                else -> NumberFormat.getNumberInstance(Locale.getDefault()).format(number)
-            }
-        }
-        com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD -> {
-            when {
-                number >= 1_000_000_000 -> "${number / 1_000_000_000}B"
-                number >= 1_000_000 -> "${number / 1_000_000}M"
-                number >= 1_000 -> "${number / 1_000}K"
-                else -> NumberFormat.getNumberInstance(Locale.getDefault()).format(number)
-            }
-        }
-    }
+    return NumberFormatter.formatWithStyle(number, style)
 }
 
 /**
@@ -1336,7 +1310,7 @@ private fun DrawScope.drawStringAndWeight(
 
     val stringPath = Path().apply {
         moveTo(attachX, attachY)
-        quadraticBezierTo(midX, midY, weightX, weightY)
+        quadraticTo(midX, midY, weightX, weightY)
     }
 
     drawPath(
@@ -1540,56 +1514,53 @@ private fun DrawScope.drawCylinderBody(
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f, 8f)
     )
 
-    // Vertical lines representing cylinder surface texture, with motion blur at high speed
-    val lineCount = 8
-    val motionBlurOffset = speedFactor * 10f
-    for (i in 0 until lineCount) {
-        val x = centerX - cylinderWidth / 2f + (i + 1) * cylinderWidth / (lineCount + 1)
-        val alpha = 0.1f + 0.05f * sin(i.toFloat())
-
-        if (speedFactor > 0.2f) {
-            // Draw blurred/trailing lines when fast
+    // Vertical lines representing cylinder surface texture — scroll with rotation
+    val lineCount = 12
+    val lineSpacing = cylinderWidth / (lineCount + 1)
+    val lineScrollOffset = (rotationAngle * cylinderWidth / (2 * PI.toFloat())) % lineSpacing
+    for (i in -1 until lineCount + 2) {
+        val x = centerX - cylinderWidth / 2f + (i + 1) * lineSpacing + lineScrollOffset
+        // Only draw lines within cylinder bounds
+        if (x > centerX - cylinderWidth / 2f + 4f && x < centerX + cylinderWidth / 2f - 4f) {
+            val alpha = 0.08f + 0.04f * sin(i.toFloat())
             drawLine(
-                color = cylinderColor.copy(alpha = alpha * 0.3f),
-                start = Offset(x - motionBlurOffset, cylinderTop + cylinderHeight * 0.1f),
-                end = Offset(x - motionBlurOffset, cylinderTop + cylinderHeight * 0.9f),
-                strokeWidth = 2f + speedFactor * 4f
+                color = Color.Black.copy(alpha = alpha),
+                start = Offset(x, cylinderTop + cylinderHeight * 0.05f),
+                end = Offset(x, cylinderTop + cylinderHeight * 0.95f),
+                strokeWidth = 1f
             )
         }
-
-        drawLine(
-            color = cylinderColor.copy(alpha = alpha * 0.5f),
-            start = Offset(x, cylinderTop + cylinderHeight * 0.1f),
-            end = Offset(x, cylinderTop + cylinderHeight * 0.9f),
-            strokeWidth = 1f
-        )
     }
 
-    // Scrolling mantra text - larger with wrap-around effect
+    // Scrolling mantra text — 2 rows: Tibetan (upper) + Romanized (lower)
     val tibetanText = mantra.tibetan ?: mantra.romanized
     val romanizedText = mantra.romanized
 
     // Use contrast-aware text color based on cylinder background
     val textColor = getContrastTextColor(cylinderColor)
 
-    // Larger Tibetan text - 2x current size (cylinderHeight * 0.12 instead of 20.sp)
+    // Row 1: Tibetan text — large and bold
     val tibetanTextStyle = TextStyle(
         color = textColor,
-        fontSize = (cylinderHeight * 0.12f).sp,
+        fontSize = (cylinderHeight * 0.16f).sp,
         fontWeight = FontWeight.Bold,
         fontFamily = TibetanFont
     )
 
-    // Smaller romanized text
+    // Row 2: Romanized text — medium, slightly transparent
     val romanizedTextStyle = TextStyle(
-        color = textColor.copy(alpha = 0.7f),
-        fontSize = (cylinderHeight * 0.06f).sp,
-        fontWeight = FontWeight.Normal
+        color = textColor.copy(alpha = 0.8f),
+        fontSize = (cylinderHeight * 0.09f).sp,
+        fontWeight = FontWeight.Medium
     )
 
     val tibetanLayout = textMeasurer.measure(text = tibetanText, style = tibetanTextStyle)
     val tibetanTextWidth = tibetanLayout.size.width.toFloat().coerceAtLeast(1f)
     val tibetanSpacing = (tibetanTextWidth * 1.3f).coerceAtLeast(1f)
+
+    val romanizedLayout = textMeasurer.measure(text = romanizedText, style = romanizedTextStyle)
+    val romanizedWidth = romanizedLayout.size.width.toFloat().coerceAtLeast(1f)
+    val romanizedSpacing = (romanizedWidth * 1.5f).coerceAtLeast(1f)
 
     // Calculate scroll offset based on rotation angle
     val scrollOffset = (rotationAngle * tibetanTextWidth / (2 * PI.toFloat())) % tibetanSpacing
@@ -1597,62 +1568,91 @@ private fun DrawScope.drawCylinderBody(
     // Clip to cylinder bounds
     val clipLeft = centerX - cylinderWidth / 2f + 12f
     val clipRight = centerX + cylinderWidth / 2f - 12f
-    val clipTop = cylinderTop + cylinderHeight * 0.1f
-    val clipBottom = cylinderTop + cylinderHeight * 0.9f
 
-    // Draw 3 rows of Tibetan text wrapping around cylinder
-    val rowPositions = listOf(0.2f, 0.5f, 0.8f)  // 3 rows at different heights
-    for (rowIndex in rowPositions.indices) {
-        val rowY = cylinderTop + cylinderHeight * rowPositions[rowIndex]
-        val startX = clipLeft + scrollOffset - tibetanSpacing
+    // Row 1: Tibetan text at 35% height
+    val tibetanY = cylinderTop + cylinderHeight * 0.35f
+    val tibetanStartX = clipLeft + scrollOffset - tibetanSpacing
+    var tibetanX = tibetanStartX
 
-        var currentX = startX
-        while (currentX < clipRight + tibetanSpacing) {
-            // Apply perspective distortion near edges
-            val normalizedX = ((currentX - centerX) / (cylinderWidth / 2f)).coerceIn(-1f, 1f)
-            val distortion = 1f - abs(normalizedX) * 0.3f  // Compress text at edges
+    while (tibetanX < clipRight + tibetanSpacing) {
+        // Apply perspective distortion near edges
+        val normalizedX = ((tibetanX - centerX) / (cylinderWidth / 2f)).coerceIn(-1f, 1f)
+        val distortion = 1f - abs(normalizedX) * 0.3f
 
-            // Draw Tibetan text
-            if (currentX + tibetanTextWidth * distortion > clipLeft && currentX < clipRight) {
-                drawText(
-                    textLayoutResult = textMeasurer.measure(
-                        text = tibetanText,
-                        style = tibetanTextStyle.copy(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    textColor.copy(alpha = 0.9f),
-                                    textColor.copy(alpha = 0.75f),
-                                    textColor.copy(alpha = 0.9f)
-                                )
+        if (tibetanX + tibetanTextWidth * distortion > clipLeft && tibetanX < clipRight) {
+            drawText(
+                textLayoutResult = textMeasurer.measure(
+                    text = tibetanText,
+                    style = tibetanTextStyle.copy(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                textColor.copy(alpha = 0.9f),
+                                textColor.copy(alpha = 0.75f),
+                                textColor.copy(alpha = 0.9f)
                             )
                         )
-                    ),
-                    topLeft = Offset(
-                        x = currentX + (tibetanTextWidth * (1f - distortion) / 2f),
-                        y = rowY - tibetanLayout.size.height / 2f
                     )
+                ),
+                topLeft = Offset(
+                    x = tibetanX + (tibetanTextWidth * (1f - distortion) / 2f),
+                    y = tibetanY - tibetanLayout.size.height / 2f
                 )
-            }
-            currentX += tibetanSpacing
-        }
-    }
-
-    // Draw romanized text below Tibetan as secondary text
-    val romanizedLayout = textMeasurer.measure(text = romanizedText, style = romanizedTextStyle)
-    val romanizedWidth = romanizedLayout.size.width.toFloat().coerceAtLeast(1f)
-    val romanizedY = cylinderTop + cylinderHeight * 0.95f
-    val romanizedStartX = clipLeft + scrollOffset - romanizedWidth
-    var romanizedX = romanizedStartX
-
-    while (romanizedX < clipRight + romanizedWidth) {
-        if (romanizedX + romanizedWidth > clipLeft && romanizedX < clipRight) {
-            drawText(
-                textLayoutResult = romanizedLayout,
-                topLeft = Offset(romanizedX, romanizedY - romanizedLayout.size.height / 2f)
             )
         }
-        romanizedX += (romanizedWidth * 1.5f).coerceAtLeast(1f)
+        tibetanX += tibetanSpacing
     }
+
+    // Row 2: Romanized text at 68% height, slightly different scroll speed
+    val romanizedY = cylinderTop + cylinderHeight * 0.68f
+    val romanizedScrollOffset = scrollOffset * 0.8f
+    val romanizedStartX = clipLeft + romanizedScrollOffset - romanizedSpacing
+    var romanizedX = romanizedStartX
+
+    while (romanizedX < clipRight + romanizedSpacing) {
+        val normalizedX = ((romanizedX - centerX) / (cylinderWidth / 2f)).coerceIn(-1f, 1f)
+        val distortion = 1f - abs(normalizedX) * 0.3f
+
+        if (romanizedX + romanizedWidth * distortion > clipLeft && romanizedX < clipRight) {
+            drawText(
+                textLayoutResult = romanizedLayout,
+                topLeft = Offset(
+                    x = romanizedX + (romanizedWidth * (1f - distortion) / 2f),
+                    y = romanizedY - romanizedLayout.size.height / 2f
+                )
+            )
+        }
+        romanizedX += romanizedSpacing
+    }
+
+    // Edge fade gradients to simulate 3D curvature
+    // Left edge fade
+    drawRoundRect(
+        brush = Brush.horizontalGradient(
+            colors = listOf(
+                cylinderColor.copy(alpha = 0.8f),
+                Color.Transparent
+            ),
+            startX = centerX - cylinderWidth / 2f,
+            endX = centerX - cylinderWidth / 2f + cylinderWidth * 0.12f
+        ),
+        topLeft = Offset(centerX - cylinderWidth / 2f, cylinderTop),
+        size = Size(cylinderWidth * 0.12f, cylinderHeight),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f, 8f)
+    )
+    // Right edge fade
+    drawRoundRect(
+        brush = Brush.horizontalGradient(
+            colors = listOf(
+                Color.Transparent,
+                cylinderColor.copy(alpha = 0.8f)
+            ),
+            startX = centerX + cylinderWidth / 2f - cylinderWidth * 0.12f,
+            endX = centerX + cylinderWidth / 2f
+        ),
+        topLeft = Offset(centerX + cylinderWidth / 2f - cylinderWidth * 0.12f, cylinderTop),
+        size = Size(cylinderWidth * 0.12f, cylinderHeight),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f, 8f)
+    )
 
     // Inner decorative border
     drawRoundRect(
@@ -2117,13 +2117,7 @@ private fun SavedWheelCard(
  * Formats a large number in short form (e.g., 100M, 1B).
  */
 private fun formatShortNumber(value: Long): String {
-    return when {
-        value >= 1_000_000_000_000L -> "${value / 1_000_000_000_000L}T"
-        value >= 1_000_000_000L -> "${value / 1_000_000_000L}B"
-        value >= 1_000_000L -> "${value / 1_000_000L}M"
-        value >= 1_000L -> "${value / 1_000L}K"
-        else -> value.toString()
-    }
+    return NumberFormatter.formatLong(value)
 }
 
 /**
@@ -2145,7 +2139,6 @@ private fun TopDownViewPrayerWheel(
     onPointerCountChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val textMeasurer = rememberTextMeasurer()
     val glowIntensity = min(1f, abs(angularVelocity) / 10f)
 
     Box(
@@ -2195,131 +2188,162 @@ private fun TopDownViewPrayerWheel(
                 }
             }
     ) {
-        Canvas(
+        // Rotating content: circle + text
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
                     rotationZ = toDegrees(rotationAngle.toDouble()).toFloat()
-                }
+                },
+            contentAlignment = Alignment.Center
         ) {
-            val canvasWidth = size.width
-            val canvasHeight = size.height
-            val centerX = canvasWidth / 2f
-            val centerY = canvasHeight / 2f
-            val wheelRadius = minOf(canvasWidth, canvasHeight) * 0.4f
+            // Circle drawn with Canvas
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val canvasWidth = size.width
+                val canvasHeight = size.height
+                val centerX = canvasWidth / 2f
+                val centerY = canvasHeight / 2f
+                val wheelRadius = minOf(canvasWidth, canvasHeight) * 0.4f
 
-            // Draw rainbow rays behind wheel
-            if (glowIntensity > 0.05f) {
-                drawRainbowRays(centerX, centerY, angularVelocity, wheelRadius * 1.5f)
-            }
+                // Outer rim (gold ring)
+                drawCircle(
+                    color = Color(wheelSkin.capColor).copy(alpha = 0.8f),
+                    radius = wheelRadius,
+                    center = Offset(centerX, centerY)
+                )
 
-            // Draw main wheel circle
-            val wheelColor = Color(wheelSkin.cylinderColor)
-
-            // Wheel background with metallic gradient
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        wheelColor.copy(alpha = 0.95f),
-                        wheelColor.copy(alpha = 0.85f),
-                        wheelColor.copy(alpha = 0.9f)
-                    ),
-                    center = Offset(centerX, centerY),
-                    radius = wheelRadius
-                ),
-                radius = wheelRadius,
-                center = Offset(centerX, centerY)
-            )
-
-            // Outer rim
-            drawCircle(
-                color = Color(wheelSkin.capColor).copy(alpha = 0.7f),
-                radius = wheelRadius,
-                center = Offset(centerX, centerY),
-                style = Stroke(width = 4f)
-            )
-
-            // Inner decorative ring
-            drawCircle(
-                color = Color(wheelSkin.capColor).copy(alpha = 0.4f),
-                radius = wheelRadius * 0.85f,
-                center = Offset(centerX, centerY),
-                style = Stroke(width = 2f)
-            )
-
-            // Text measured for circumference wrapping
-            val tibetanText = currentMantra.tibetan ?: currentMantra.romanized
-            val textColor = getContrastTextColor(wheelColor)
-            val textStyle = TextStyle(
-                color = textColor,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = TibetanFont
-            )
-
-            val textLayout = textMeasurer.measure(text = tibetanText, style = textStyle)
-            val textWidth = textLayout.size.width.toFloat()
-            val circumference = 2 * PI.toFloat() * wheelRadius * 0.75f
-            val charsVisible = (circumference / textWidth).toInt().coerceIn(1, 50)
-
-            // Draw text around circumference
-            val scrollOffset = (rotationAngle * wheelRadius / 2f) % textWidth
-            val textY = centerY
-
-            for (i in 0 until charsVisible) {
-                val charAngle = (i * 360f / charsVisible + scrollOffset * 2f) * PI.toFloat() / 180f
-                val textX = centerX + cos(charAngle) * wheelRadius * 0.75f
-
-                if (textX > 0 && textX < canvasWidth && textY > 0 && textY < canvasHeight) {
-                    drawText(
-                        textLayoutResult = textMeasurer.measure(text = tibetanText, style = textStyle),
-                        topLeft = Offset(
-                            textX - textLayout.size.width / 2f,
-                            textY - textLayout.size.height / 2f
-                        )
-                    )
-                }
-            }
-
-            // Center crystal/jewel
-            drawCrystal(
-                centerX = centerX,
-                topY = centerY,
-                swayAmount = 0f,
-                glowIntensity = glowIntensity,
-                skin = wheelSkin
-            )
-
-            // Milestone glow
-            if (milestoneGlowAlpha > 0f) {
+                // Inner drum surface
+                val wheelColor = Color(wheelSkin.cylinderColor)
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            Color(0xFFFFD700).copy(alpha = milestoneGlowAlpha * 0.8f),
-                            Color(0xFFFFD700).copy(alpha = milestoneGlowAlpha * 0.4f),
-                            Color(0x00FFD700)
+                            wheelColor.copy(alpha = 0.95f),
+                            wheelColor.copy(alpha = 0.85f),
+                            wheelColor.copy(alpha = 0.9f)
                         ),
                         center = Offset(centerX, centerY),
-                        radius = wheelRadius * 1.5f
+                        radius = wheelRadius * 0.92f
                     ),
-                    radius = wheelRadius * 1.5f,
+                    radius = wheelRadius * 0.92f,
+                    center = Offset(centerX, centerY)
+                )
+
+                // Decorative rings
+                drawCircle(
+                    color = Color(wheelSkin.capColor).copy(alpha = 0.4f),
+                    radius = wheelRadius * 0.85f,
+                    center = Offset(centerX, centerY),
+                    style = Stroke(width = 2f)
+                )
+                drawCircle(
+                    color = Color(wheelSkin.capColor).copy(alpha = 0.3f),
+                    radius = wheelRadius * 0.7f,
+                    center = Offset(centerX, centerY),
+                    style = Stroke(width = 1f)
+                )
+
+                // Center hub/jewel
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            Color(wheelSkin.crystalColor).copy(alpha = 0.9f),
+                            Color(wheelSkin.crystalColor).copy(alpha = 0.5f),
+                            Color.Transparent
+                        ),
+                        center = Offset(centerX - wheelRadius * 0.05f, centerY - wheelRadius * 0.05f),
+                        radius = wheelRadius * 0.2f
+                    ),
+                    radius = wheelRadius * 0.2f,
+                    center = Offset(centerX, centerY)
+                )
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.4f),
+                    radius = wheelRadius * 0.12f,
                     center = Offset(centerX, centerY)
                 )
             }
 
-            // Send light animation
-            if (sendLightActive) {
-                val pulseTime = (System.currentTimeMillis() % 3000) / 3000f
-                for (pulse in 0..3) {
-                    val circleProgress = ((pulseTime + pulse * 0.25f) % 1f)
-                    val circleRadius = wheelRadius * (0.5f + circleProgress * 2f)
-                    val circleAlpha = (1f - circleProgress) * 0.3f
-                    drawCircle(
-                        color = Color(wheelSkin.rayColor).copy(alpha = circleAlpha),
-                        radius = circleRadius,
-                        center = Offset(centerX, centerY),
-                        style = Stroke(width = 4f * (1f - circleProgress))
+            // Text overlaid using Compose Text (not Canvas drawText)
+            // This ensures proper Tibetan rendering
+            val tibetanText = currentMantra.tibetan
+            val romanizedText = currentMantra.romanized
+            val textColor = getContrastTextColor(Color(wheelSkin.cylinderColor))
+
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (tibetanText != null) {
+                    Text(
+                        text = tibetanText,
+                        color = textColor,
+                        fontSize = 14.sp,
+                        fontFamily = FontFamily.Serif,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        modifier = Modifier
+                            .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     )
+                }
+                Text(
+                    text = romanizedText,
+                    color = textColor,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        // Light rays (drawn OUTSIDE the rotating box so they stay fixed)
+        if (glowIntensity > 0.05f || sendLightActive) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val canvasWidth = size.width
+                val canvasHeight = size.height
+                val centerX = canvasWidth / 2f
+                val centerY = canvasHeight / 2f
+                val wheelRadius = minOf(canvasWidth, canvasHeight) * 0.4f
+
+                // Rainbow rays
+                if (glowIntensity > 0.05f) {
+                    drawRainbowRays(centerX, centerY, angularVelocity, wheelRadius * 1.5f)
+                }
+
+                // Milestone glow
+                if (milestoneGlowAlpha > 0f) {
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFFFFD700).copy(alpha = milestoneGlowAlpha * 0.8f),
+                                Color(0xFFFFD700).copy(alpha = milestoneGlowAlpha * 0.4f),
+                                Color(0x00FFD700)
+                            ),
+                            center = Offset(centerX, centerY),
+                            radius = wheelRadius * 1.5f
+                        ),
+                        radius = wheelRadius * 1.5f,
+                        center = Offset(centerX, centerY)
+                    )
+                }
+
+                // Send light animation
+                if (sendLightActive) {
+                    val pulseTime = (System.currentTimeMillis() % 3000) / 3000f
+                    for (pulse in 0..3) {
+                        val circleProgress = ((pulseTime + pulse * 0.25f) % 1f)
+                        val circleRadius = wheelRadius * (0.5f + circleProgress * 2f)
+                        val circleAlpha = (1f - circleProgress) * 0.3f
+                        drawCircle(
+                            color = Color(wheelSkin.rayColor).copy(alpha = circleAlpha),
+                            radius = circleRadius,
+                            center = Offset(centerX, centerY),
+                            style = Stroke(width = 4f * (1f - circleProgress))
+                        )
+                    }
                 }
             }
         }
@@ -2661,13 +2685,13 @@ private fun DrawScope.drawLotus(
             if (i == 0) {
                 moveTo(centerX, centerY)
             }
-            quadraticBezierTo(
+            quadraticTo(
                 leftX + cos(angle) * petalLength * 0.5f,
                 leftY + sin(angle) * petalLength * 0.5f,
                 tipX,
                 tipY
             )
-            quadraticBezierTo(
+            quadraticTo(
                 rightX + cos(angle) * petalLength * 0.5f,
                 rightY + sin(angle) * petalLength * 0.5f,
                 centerX,
@@ -2911,9 +2935,9 @@ private fun getContrastTextColor(backgroundColor: Color): Color {
     val r = backgroundColor.red
     val g = backgroundColor.green
     val b = backgroundColor.blue
-    // Calculate relative luminance using sRGB coefficients
-    val luminance = 0.2126f * r + 0.7152f * g + 0.0722f * b
-    return if (luminance > 0.5f) Color(0xFF2D1F14) else Color(0xFFF5E6C8)
+    // Calculate relative luminance using standard coefficients
+    val luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return if (luminance > 0.5) Color(0xFF1A1A1A) else Color(0xFFF5F5F5)
 }
 
 /**

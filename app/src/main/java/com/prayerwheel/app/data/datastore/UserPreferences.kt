@@ -109,6 +109,8 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         val AUTO_SPIN_ENABLED = booleanPreferencesKey("auto_spin_enabled")
         val TWO_HANDED_ENABLED = booleanPreferencesKey("two_handed_enabled")
         val NUMBER_NOTATION = stringPreferencesKey("number_notation")
+        val BACKGROUND_VIBRATION_ENABLED = booleanPreferencesKey("background_vibration_enabled")
+        val VIBRATION_INTENSITY = floatPreferencesKey("vibration_intensity")
     }
 
     val selectedMantra: Flow<String> = dataStore.data.map { preferences ->
@@ -263,6 +265,14 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         } catch (e: IllegalArgumentException) {
             NumberNotation.STANDARD
         }
+    }
+
+    val backgroundVibrationEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[Keys.BACKGROUND_VIBRATION_ENABLED] ?: false
+    }
+
+    val vibrationIntensity: Flow<Float> = dataStore.data.map { preferences ->
+        preferences[Keys.VIBRATION_INTENSITY] ?: 1.0f
     }
 
     suspend fun setSelectedMantra(mantra: String) {
@@ -491,6 +501,18 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
+    suspend fun setBackgroundVibrationEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[Keys.BACKGROUND_VIBRATION_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setVibrationIntensity(intensity: Float) {
+        dataStore.edit { preferences ->
+            preferences[Keys.VIBRATION_INTENSITY] = intensity.coerceIn(0.1f, 1.0f)
+        }
+    }
+
     private fun parseSavedWheelsJson(jsonString: String): List<SavedWheel> {
         return try {
             val jsonArray = JSONArray(jsonString)
@@ -559,6 +581,14 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
                 id = "default_65b",
                 name = "65B Prayer Wheel",
                 capacity = 65_000_000_000L,
+                mantraId = DEFAULT_MANTRA,
+                skinId = "traditional_gold",
+                createdAt = 0L
+            ),
+            SavedWheel(
+                id = "default_540b",
+                name = "540B Prayer Wheel",
+                capacity = 540_000_000_000L,
                 mantraId = DEFAULT_MANTRA,
                 skinId = "traditional_gold",
                 createdAt = 0L

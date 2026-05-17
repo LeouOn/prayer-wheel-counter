@@ -1,26 +1,21 @@
 package com.prayerwheel.app.ui.components
 
 import java.math.BigInteger
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.text.NumberFormat
 import java.util.Locale
 
-/**
- * Number formatter with extended notation for very large numbers.
- * Supports both standard metric suffixes (K, M, B, T) and extended
- * double-character notation (aa, ab, ac, etc.) like in idle games.
- */
 object NumberFormatter {
-    
-    // Standard metric suffixes
+
     private val suffixes = listOf(
-        "", "K", "M", "B", "T",           // thousand, million, billion, trillion
-        "Qa", "Qi", "Sx", "Sp", "Oc",     // quadrillion, quintillion, sextillion, septillion, octillion
-        "No", "Dc", "UDc", "DDc", "TDc",  // nonillion, decillion, undecillion, duodecillion, tredecillion
-        "QaDc", "QiDc", "SxDc", "SpDc", "OcDc", // quattuordecillion through octodecillion
-        "NoDc", "Vg"                       // novemdecillion, vigintillion
+        "", "K", "M", "B", "T",
+        "Qa", "Qi", "Sx", "Sp", "Oc",
+        "No", "Dc", "UDc", "DDc", "TDc",
+        "QaDc", "QiDc", "SxDc", "SpDc", "OcDc",
+        "NoDc", "Vg"
     )
-    
-    // Double-character notation (like antimatter dimensions)
+
     private val doubleSuffixes = listOf(
         "", "K", "M", "B", "T",
         "aa", "ab", "ac", "ad", "ae", "af", "ag", "ah", "ai", "aj",
@@ -30,60 +25,124 @@ object NumberFormatter {
         "bk", "bl", "bm", "bn", "bo", "bp", "bq", "br", "bs", "bt",
         "bu", "bv", "bw", "bx", "by", "bz"
     )
-    
-    /**
-     * Formats a BigInteger using the specified notation style.
-     * @param number The number to format
-     * @param useDoubleNotation If true, use extended double-character suffixes (aa, ab, etc.)
-     * @return Formatted string like "1.5M" or "1.5aa"
-     */
+
     fun format(number: BigInteger, useDoubleNotation: Boolean = false): String {
         if (number < BigInteger.valueOf(1000)) return number.toString()
-        
+
         val suffixList = if (useDoubleNotation) doubleSuffixes else suffixes
-        var value = number.toDouble()
+        var value = number.toBigDecimal()
         var suffixIndex = 0
-        
-        while (value >= 1000.0 && suffixIndex < suffixList.size - 1) {
-            value /= 1000.0
+        val thousand = BigDecimal.valueOf(1000)
+
+        while (value >= thousand && suffixIndex < suffixList.size - 1) {
+            value = value.divide(thousand, 10, RoundingMode.HALF_UP)
             suffixIndex++
         }
-        
+
         val suffix = suffixList[suffixIndex]
-        return if (value >= 100.0) {
-            "${value.toInt()}$suffix"
-        } else if (value >= 10.0) {
-            "${"%.1f".format(value)}$suffix"
+        val doubleVal = value.toDouble()
+        return if (doubleVal >= 100.0) {
+            "${doubleVal.toInt()}$suffix"
+        } else if (doubleVal >= 10.0) {
+            "${"%.1f".format(doubleVal)}$suffix"
         } else {
-            "${"%.2f".format(value)}$suffix"
+            "${"%.2f".format(doubleVal)}$suffix"
         }
     }
-    
-    /**
-     * Formats a number showing both abbreviated and full forms.
-     * @param number The number to format
-     * @param useDoubleNotation If true, use extended double-character suffixes
-     * @return String like "1.5M (1,500,000)"
-     */
+
+    fun formatLong(number: Long, useDoubleNotation: Boolean = false): String {
+        return format(number.toBigInteger(), useDoubleNotation)
+    }
+
     fun formatWithFull(number: BigInteger, useDoubleNotation: Boolean = false): String {
         val abbreviated = format(number, useDoubleNotation)
         val full = formatWithCommas(number)
         return "$abbreviated ($full)"
     }
-    
-    /**
-     * Formats a number with locale-aware comma separators.
-     * @param number The number to format
-     * @return String like "1,500,000"
-     */
+
     fun formatWithCommas(number: BigInteger): String {
         return NumberFormat.getNumberInstance(Locale.getDefault()).format(number)
     }
-    
-    /**
-     * Formats a Long value (for simpler cases).
-     */
-    fun formatLong(number: Long, useDoubleNotation: Boolean = false): String {
-        return format(number.toBigInteger(), useDoubleNotation)
+
+    fun formatWithCommas(number: Long): String {
+        return NumberFormat.getNumberInstance(Locale.getDefault()).format(number)
+    }
+
+    fun getSuffixName(number: BigInteger): String {
+        if (number < BigInteger.valueOf(1000)) return ""
+        var suffixIndex = 0
+        var value = number.toDouble()
+        while (value >= 1000.0 && suffixIndex < suffixes.size - 1) {
+            value /= 1000.0
+            suffixIndex++
+        }
+        return suffixes[suffixIndex]
+    }
+
+    private val longFormNames = listOf(
+        "", "Thousand", "Million", "Billion", "Trillion",
+        "Quadrillion", "Quintillion", "Sextillion", "Septillion", "Octillion",
+        "Nonillion", "Decillion", "Undecillion", "Duodecillion", "Tredecillion"
+    )
+
+    fun formatWithStyle(number: BigInteger, style: com.prayerwheel.app.data.datastore.NumberFormatStyle): String {
+        return when (style) {
+            com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD -> format(number)
+            com.prayerwheel.app.data.datastore.NumberFormatStyle.EXACT -> formatWithCommas(number)
+            com.prayerwheel.app.data.datastore.NumberFormatStyle.SCIENTIFIC -> formatScientific(number)
+            com.prayerwheel.app.data.datastore.NumberFormatStyle.LONG_FORM -> formatLongForm(number)
+        }
+    }
+
+    fun formatWithStyle(number: Long, style: com.prayerwheel.app.data.datastore.NumberFormatStyle): String {
+        return formatWithStyle(number.toBigInteger(), style)
+    }
+
+    private fun formatScientific(number: BigInteger): String {
+        if (number < BigInteger.valueOf(1_000_000L)) return formatWithCommas(number)
+        val str = number.toString()
+        val exponent = str.length - 1
+        val mantissa = "${str[0]}.${str.substring(1, 3)}"
+        return "$mantissa x 10^$exponent"
+    }
+
+    private fun formatLongForm(number: BigInteger): String {
+        if (number < BigInteger.valueOf(1_000L)) return formatWithCommas(number)
+        var value = number.toBigDecimal()
+        var suffixIndex = 0
+        val thousand = BigDecimal.valueOf(1000)
+        while (value >= thousand && suffixIndex < longFormNames.size - 1) {
+            value = value.divide(thousand, 10, RoundingMode.HALF_UP)
+            suffixIndex++
+        }
+        val name = longFormNames.getOrElse(suffixIndex) { suffixes.getOrElse(suffixIndex) { "" } }
+        val doubleVal = value.toDouble()
+        return if (doubleVal >= 100.0) {
+            "${doubleVal.toInt()} $name"
+        } else if (doubleVal >= 10.0) {
+            "${"%.1f".format(doubleVal)} $name"
+        } else {
+            "${"%.2f".format(doubleVal)} $name"
+        }
+    }
+
+    fun parseShortHand(input: String): BigInteger {
+        val trimmed = input.trim().uppercase(Locale.getDefault())
+        if (trimmed.isEmpty()) return BigInteger.ZERO
+
+        val suffixList = suffixes.drop(1)
+        for ((index, suffix) in suffixList.withIndex()) {
+            if (trimmed.endsWith(suffix)) {
+                val numberPart = trimmed.dropLast(suffix.length).replace(",", "").replace(" ", "")
+                val multiplier = BigInteger.TEN.pow((index + 1) * 3)
+                val baseValue = numberPart.toBigDecimalOrNull() ?: return BigInteger.ZERO
+                return baseValue.multiply(BigDecimal(multiplier)).toBigInteger()
+            }
+        }
+        return try {
+            BigInteger(trimmed.replace(",", "").replace(" ", ""))
+        } catch (e: NumberFormatException) {
+            BigInteger.ZERO
+        }
     }
 }

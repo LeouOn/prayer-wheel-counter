@@ -25,6 +25,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -53,9 +54,14 @@ import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.data.db.dao.LifetimeStatsDao
 import com.prayerwheel.app.data.db.dao.SessionDao
 import com.prayerwheel.app.data.model.LifetimeStats
+import com.prayerwheel.app.ui.components.CapacitySlider
+import com.prayerwheel.app.ui.components.NumberFormatter
 import com.prayerwheel.app.viewmodel.WheelViewModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import java.math.BigDecimal
+import java.math.BigInteger
+import java.math.RoundingMode
 
 /**
  * Settings screen with all preference groups.
@@ -93,6 +99,8 @@ fun SettingsScreen(
     val customDedication by userPreferences.customDedication.collectAsState(initial = null)
     val sessionTimeGoalSeconds by userPreferences.sessionTimeGoalSeconds.collectAsState(initial = 0L)
     val dailyTimeGoalSeconds by userPreferences.dailyTimeGoalSeconds.collectAsState(initial = 0L)
+    val backgroundVibrationEnabled by userPreferences.backgroundVibrationEnabled.collectAsState(initial = false)
+    val vibrationIntensity by userPreferences.vibrationIntensity.collectAsState(initial = 1.0f)
 
     // Lifetime stats
     val lifetimeStats by lifetimeStatsDao.observeStats().collectAsState(initial = null)
@@ -165,21 +173,22 @@ fun SettingsScreen(
                     modifier = Modifier.clickable { /* Navigate to mantra detail */ }
                 )
                 
-                // Mantras per Rotation
                 ListItem(
                     headlineContent = { Text("Mantras per Rotation") },
-                    supportingContent = { Text("$mantrasPerRotation") }
+                    supportingContent = {
+                        Text(
+                            NumberFormatter.formatWithFull(
+                                BigInteger.valueOf(mantrasPerRotation)
+                            )
+                        )
+                    }
                 )
-                Slider(
-                    value = mantrasPerRotation.toFloat(),
+                CapacitySlider(
+                    currentValue = mantrasPerRotation,
                     onValueChange = {
-                        scope.launch { userPreferences.setMantrasPerRotation(it.toLong()) }
+                        scope.launch { userPreferences.setMantrasPerRotation(it) }
                     },
-                    valueRange = 1f..108f,
-                    steps = 106,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
 
                 // Direction
@@ -271,6 +280,34 @@ fun SettingsScreen(
                         )
                     }
                 )
+                if (hapticEnabled) {
+                    ListItem(
+                        headlineContent = { Text("Vibration Intensity") },
+                        supportingContent = { Text("${(vibrationIntensity * 100).toInt()}%") }
+                    )
+                    Slider(
+                        value = vibrationIntensity,
+                        onValueChange = {
+                            viewModel.setVibrationIntensity(it)
+                        },
+                        valueRange = 0.1f..1.0f,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                    )
+                    ListItem(
+                        headlineContent = { Text("Background Vibration") },
+                        supportingContent = { Text("Vibrate when app is in background") },
+                        trailingContent = {
+                            Switch(
+                                checked = backgroundVibrationEnabled,
+                                onCheckedChange = {
+                                    viewModel.setBackgroundVibrationEnabled(it)
+                                }
+                            )
+                        }
+                    )
+                }
 
                 // Counter-clockwise
                 ListItem(
@@ -564,17 +601,92 @@ fun SettingsScreen(
 
             // DATA SECTION
             SettingsSection(
-                title = "Data",
+                title = "Data & Statistics",
                 expanded = dataExpanded,
                 onToggle = { dataExpanded = !dataExpanded }
             ) {
-                // Current stats
                 lifetimeStats?.let { stats ->
-                    ListItem(
-                        headlineContent = { Text("Current Stats") },
-                        supportingContent = {
-                            Text("${stats.sessionsCompleted} sessions, ${stats.totalRotations} rotations, ${stats.totalMantras} mantras")
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "Lifetime Statistics",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Medium
+                            )
+                            HorizontalDivider()
+                            StatRow(
+                                label = "Total Mantras",
+                                value = NumberFormatter.formatWithStyle(stats.totalMantras, com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD)
+                            )
+                            StatRow(
+                                label = "Exact Count",
+                                value = NumberFormatter.formatWithCommas(stats.totalMantras)
+                            )
+                            StatRow(
+                                label = "Total Rotations",
+                                value = NumberFormatter.formatLong(stats.totalRotations)
+                            )
+                            StatRow(
+                                label = "Sessions Completed",
+                                value = NumberFormatter.formatLong(stats.sessionsCompleted)
+                            )
+                            if (stats.totalSpinningTimeSeconds > 0) {
+                                StatRow(
+                                    label = "Total Practice Time",
+                                    value = formatDuration(stats.totalSpinningTimeSeconds)
+                                )
+                            }
+                            if (stats.averageSessionDurationSeconds > 0) {
+                                StatRow(
+                                    label = "Average Session",
+                                    value = formatDuration(stats.averageSessionDurationSeconds)
+                                )
+                            }
+                            if (stats.totalRotations > 0 && stats.totalSpinningTimeSeconds > 0) {
+                                val avgRpm = stats.totalRotations.toFloat() / (stats.totalSpinningTimeSeconds.toFloat() / 60f)
+                                StatRow(
+                                    label = "Lifetime Average RPM",
+                                    value = String.format("%.1f", avgRpm)
+                                )
+                            }
+                            stats.firstSessionAt?.let { firstMs ->
+                                val daysSinceStart = (System.currentTimeMillis() - firstMs) / (1000 * 60 * 60 * 24)
+                                if (daysSinceStart > 0) {
+                                    StatRow(
+                                        label = "Practicing For",
+                                        value = if (daysSinceStart >= 365) {
+                                            String.format("%d days (%.1f years)", daysSinceStart, daysSinceStart / 365.25)
+                                        } else {
+                                            "$daysSinceStart days"
+                                        }
+                                    )
+                                    val mantrasPerDay = stats.totalMantras.toBigDecimal()
+                                        .divide(BigDecimal(daysSinceStart), 0, java.math.RoundingMode.HALF_UP)
+                                    StatRow(
+                                        label = "Average Mantras/Day",
+                                        value = NumberFormatter.format(mantrasPerDay.toBigInteger())
+                                    )
+                                }
+                            }
                         }
+                    }
+                } ?: run {
+                    ListItem(
+                        headlineContent = { Text("No practice data yet") },
+                        supportingContent = { Text("Complete a session to see your statistics here") }
                     )
                 }
 
@@ -695,6 +807,50 @@ fun SettingsScreen(
                 }
             )
         }
+    }
+}
+
+@Composable
+private fun StatRow(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+private fun formatDuration(seconds: Long): String {
+    return when {
+        seconds >= 86400 -> {
+            val days = seconds / 86400
+            val hrs = (seconds % 86400) / 3600
+            if (hrs > 0) String.format("%dd %dh", days, hrs) else "${days}d"
+        }
+        seconds >= 3600 -> {
+            val hrs = seconds / 3600
+            val mins = (seconds % 3600) / 60
+            if (mins > 0) String.format("%dh %dm", hrs, mins) else "${hrs}h"
+        }
+        seconds >= 60 -> {
+            val mins = seconds / 60
+            val secs = seconds % 60
+            if (secs > 0) String.format("%dm %ds", mins, secs) else "${mins}m"
+        }
+        else -> "${seconds}s"
     }
 }
 

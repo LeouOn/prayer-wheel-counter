@@ -307,6 +307,15 @@ class WheelViewModel(
     private val _twoHandedEnabled = MutableStateFlow(false)
     val twoHandedEnabled: StateFlow<Boolean> = _twoHandedEnabled.asStateFlow()
 
+    private val _isAppInForeground = MutableStateFlow(true)
+    val isAppInForeground: StateFlow<Boolean> = _isAppInForeground.asStateFlow()
+
+    private val _backgroundVibrationEnabled = MutableStateFlow(false)
+    val backgroundVibrationEnabled: StateFlow<Boolean> = _backgroundVibrationEnabled.asStateFlow()
+
+    private val _vibrationIntensity = MutableStateFlow(1.0f)
+    val vibrationIntensity: StateFlow<Float> = _vibrationIntensity.asStateFlow()
+
     /**
      * Left wheel angular velocity (for dual wheel mode).
      */
@@ -489,6 +498,16 @@ class WheelViewModel(
         viewModelScope.launch {
             userPreferences.twoHandedEnabled.collect { enabled ->
                 _twoHandedEnabled.value = enabled
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.backgroundVibrationEnabled.collect { enabled ->
+                _backgroundVibrationEnabled.value = enabled
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.vibrationIntensity.collect { intensity ->
+                _vibrationIntensity.value = intensity
             }
         }
         loadLifetimeStats()
@@ -1000,8 +1019,7 @@ class WheelViewModel(
     fun triggerSendLight() {
         _sendLightActive.value = true
         viewModelScope.launch {
-            // Trigger haptic pattern (3 gentle pulses)
-            if (_hapticEnabled.value) {
+            if (shouldVibrate()) {
                 triggerSendLightHaptic()
             }
             // Duration of the animation
@@ -1466,29 +1484,50 @@ class WheelViewModel(
     }
 
     private fun triggerHapticTick() {
-        if (_hapticEnabled.value) {
+        if (shouldVibrate()) {
             triggerHaptic(HAPTIC_TICK_DURATION)
         }
     }
 
     private fun triggerHapticPause() {
-        if (_hapticEnabled.value) {
+        if (shouldVibrate()) {
             triggerHaptic(HAPTIC_PAUSE_DURATION)
         }
     }
 
     private fun triggerHapticSlider() {
-        if (_hapticEnabled.value) {
+        if (shouldVibrate()) {
             triggerHaptic(HAPTIC_SLIDER_DURATION)
         }
     }
 
-    /**
-     * Triggers haptic feedback for milestone achievements (stronger pulse).
-     */
     fun triggerMilestoneHaptic() {
-        if (_hapticEnabled.value) {
+        if (shouldVibrate()) {
             triggerHaptic(HAPTIC_MILESTONE_DURATION)
+        }
+    }
+
+    private fun shouldVibrate(): Boolean {
+        if (!_hapticEnabled.value) return false
+        if (_isAppInForeground.value) return true
+        return _backgroundVibrationEnabled.value
+    }
+
+    fun setAppInForeground(inForeground: Boolean) {
+        _isAppInForeground.value = inForeground
+    }
+
+    fun setBackgroundVibrationEnabled(enabled: Boolean) {
+        _backgroundVibrationEnabled.value = enabled
+        viewModelScope.launch {
+            userPreferences.setBackgroundVibrationEnabled(enabled)
+        }
+    }
+
+    fun setVibrationIntensity(intensity: Float) {
+        _vibrationIntensity.value = intensity
+        viewModelScope.launch {
+            userPreferences.setVibrationIntensity(intensity)
         }
     }
 
@@ -1502,9 +1541,14 @@ class WheelViewModel(
         }
     }
 
+    fun isAppInForeground(): Boolean = _isAppInForeground.value
+
     private fun triggerHaptic(durationMs: Long) {
+        val intensity = _vibrationIntensity.value
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val effect = VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
+            val amplitude = (VibrationEffect.DEFAULT_AMPLITUDE * intensity).toInt()
+                .coerceIn(1, 255)
+            val effect = VibrationEffect.createOneShot(durationMs, amplitude)
             vibrator.vibrate(effect)
         } else {
             @Suppress("DEPRECATION")
