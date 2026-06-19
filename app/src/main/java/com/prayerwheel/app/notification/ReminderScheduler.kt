@@ -188,8 +188,20 @@ object ReminderScheduler {
         } else {
             // Primary path: setAlarmClock bypasses Doze and is treated by the
             // OS as a user-initiated alarm. Correct for clock-time reminders.
-            val info = AlarmManager.AlarmClockInfo(triggerAtMillis, null)
-            alarmManager.setAlarmClock(info, pendingIntent)
+            // Defensive try/catch matches EndOfDayScheduler: canScheduleExactAlarms()
+            // can flip to false between the check and the call (revoked via
+            // settings in a race) — fall back to inexact rather than crash.
+            try {
+                val info = AlarmManager.AlarmClockInfo(triggerAtMillis, null)
+                alarmManager.setAlarmClock(info, pendingIntent)
+            } catch (e: SecurityException) {
+                Log.w(TAG, "setAlarmClock threw SecurityException; falling back to inexact", e)
+                alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAtMillis,
+                    pendingIntent
+                )
+            }
         }
 
         Log.d(
