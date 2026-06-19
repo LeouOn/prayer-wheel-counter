@@ -82,7 +82,9 @@ object NumberFormatter {
     private val longFormNames = listOf(
         "", "Thousand", "Million", "Billion", "Trillion",
         "Quadrillion", "Quintillion", "Sextillion", "Septillion", "Octillion",
-        "Nonillion", "Decillion", "Undecillion", "Duodecillion", "Tredecillion"
+        "Nonillion", "Decillion", "Undecillion", "Duodecillion", "Tredecillion",
+        "Quattuordecillion", "Quindecillion", "Sexdecillion", "Septendecillion",
+        "Octodecillion", "Novemdecillion", "Vigintillion"
     )
 
     fun formatWithStyle(number: BigInteger, style: com.prayerwheel.app.data.datastore.NumberFormatStyle): String {
@@ -106,7 +108,7 @@ object NumberFormatter {
         return "$mantissa x 10^$exponent"
     }
 
-    private fun formatLongForm(number: BigInteger): String {
+    fun formatLongForm(number: BigInteger): String {
         if (number < BigInteger.valueOf(1_000L)) return formatWithCommas(number)
         var value = number.toBigDecimal()
         var suffixIndex = 0
@@ -144,5 +146,99 @@ object NumberFormatter {
         } catch (e: NumberFormatException) {
             BigInteger.ZERO
         }
+    }
+
+    // ===== Cosmic Comparison Helpers =====
+
+    fun formatMalaEquivalent(mantras: BigInteger): String {
+        val mala = BigInteger("108")
+        if (mantras < mala) return "< 1 mala circuit"
+        val circuits = mantras.divide(mala)
+        return "${format(circuits)} mala circuits (108 each)"
+    }
+
+    fun humanizeYears(years: BigDecimal): String {
+        if (years <= BigDecimal.ZERO) return "0 years"
+        val oneMonth = BigDecimal("0.083333")  // 1/12
+        return when {
+            years < oneMonth -> {
+                val days = years.multiply(BigDecimal("365.25")).setScale(0, RoundingMode.HALF_UP)
+                "$days days"
+            }
+            years < BigDecimal.ONE -> {
+                val months = years.multiply(BigDecimal("12")).setScale(1, RoundingMode.HALF_UP)
+                "$months months"
+            }
+            years < BigDecimal.valueOf(1000) -> {
+                if (years >= BigDecimal.valueOf(10)) {
+                    "${years.setScale(0, RoundingMode.HALF_UP)} years"
+                } else {
+                    "${years.setScale(1, RoundingMode.HALF_UP)} years"
+                }
+            }
+            years < BigDecimal.valueOf(1_000_000) -> {
+                val v = years.divide(BigDecimal.valueOf(1000), 1, RoundingMode.HALF_UP)
+                "$v thousand years"
+            }
+            years < BigDecimal.valueOf(1_000_000_000) -> {
+                val v = years.divide(BigDecimal.valueOf(1_000_000), 1, RoundingMode.HALF_UP)
+                "$v million years"
+            }
+            years < BigDecimal.valueOf(1_000_000_000_000L) -> {
+                val v = years.divide(BigDecimal.valueOf(1_000_000_000), 1, RoundingMode.HALF_UP)
+                "$v billion years"
+            }
+            years < BigDecimal("1000000000000000") -> {
+                val v = years.divide(BigDecimal.valueOf(1_000_000_000_000L), 1, RoundingMode.HALF_UP)
+                "$v trillion years"
+            }
+            else -> {
+                // Use scientific notation for >= 1 quadrillion years
+                val s = years.toBigInteger().toString()
+                val exponent = s.length - 1
+                val mantissa = "${s[0]}.${s.substring(1, minOf(3, s.length))}"
+                "$mantissa × 10^$exponent years"
+            }
+        }
+    }
+
+    fun humanizeYearsWithCosmicContext(years: BigDecimal): String {
+        val base = humanizeYears(years)
+        return when {
+            years >= CosmicReference.AGE_OF_UNIVERSE -> {
+                val ratio = years.divide(CosmicReference.AGE_OF_UNIVERSE, 1, RoundingMode.HALF_UP)
+                "$base ($ratio× age of universe)"
+            }
+            years >= CosmicReference.AGE_OF_EARTH -> {
+                val ratio = years.divide(CosmicReference.AGE_OF_EARTH, 1, RoundingMode.HALF_UP)
+                "$base ($ratio× age of Earth)"
+            }
+            years >= CosmicReference.TIME_SINCE_DINOSAURS -> {
+                val ratio = years.divide(CosmicReference.TIME_SINCE_DINOSAURS, 1, RoundingMode.HALF_UP)
+                "$base ($ratio× time since dinosaurs)"
+            }
+            years >= CosmicReference.TIME_SINCE_HOMO_SAPIENS -> {
+                val ratio = years.divide(CosmicReference.TIME_SINCE_HOMO_SAPIENS, 1, RoundingMode.HALF_UP)
+                "$base ($ratio× age of Homo sapiens)"
+            }
+            years >= CosmicReference.TIME_SINCE_PYRAMIDS -> {
+                val ratio = years.divide(CosmicReference.TIME_SINCE_PYRAMIDS, 1, RoundingMode.HALF_UP)
+                "$base ($ratio× age of Pyramids)"
+            }
+            else -> base
+        }
+    }
+
+    fun formatPercent(value: BigInteger, total: BigInteger): String {
+        if (total == BigInteger.ZERO) return "0%"
+        if (value == BigInteger.ZERO) return "0%"
+        if (value >= total) return "100%"
+        val percent = value.toBigDecimal()
+            .divide(total.toBigDecimal(), 8, RoundingMode.HALF_UP)
+            .multiply(BigDecimal("100"))
+            .setScale(4, RoundingMode.HALF_UP)
+            .stripTrailingZeros()
+        val plain = percent.toPlainString()
+        return if (percent < BigDecimal("0.0001")) "< 0.0001%" else "$plain%"
     }
 }
