@@ -42,10 +42,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.prayerwheel.app.ui.components.CosmicReference
 import com.prayerwheel.app.ui.components.NumberFormatter
+import com.prayerwheel.app.ui.components.ShortHandGuideCard
+import com.prayerwheel.app.ui.components.buildCosmicQuantityComparisons
+import com.prayerwheel.app.ui.components.buildCosmicTimeComparisons
+import com.prayerwheel.app.ui.components.buildCrossCulturalTimeComparisons
+import com.prayerwheel.app.ui.components.buildFictionComparisons
+import com.prayerwheel.app.ui.components.buildRateComparison
+import com.prayerwheel.app.ui.components.buildCrossGenerational
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.math.RoundingMode
+import java.util.Locale
 import kotlin.math.pow
 
 private enum class ProjectionPeriod(val label: String, val months: Int) {
@@ -77,7 +86,20 @@ private enum class MantraTarget(val label: String, val value: BigInteger) {
     ONE_HUNDRED_BILLION("100B", BigInteger.valueOf(100_000_000_000L)),
     ONE_TRILLION("1T", BigInteger.valueOf(1_000_000_000_000L)),
     TEN_TRILLION("10T", BigInteger.valueOf(10_000_000_000_000L)),
-    ONE_QUADRILLION("1Qa", BigInteger("1000000000000000"))
+    ONE_HUNDRED_TRILLION("100T", BigInteger.valueOf(100_000_000_000_000L)),
+    ONE_QUADRILLION("1Qa", BigInteger("1000000000000000")),
+    TEN_QUADRILLION("10Qa", BigInteger("10000000000000000")),
+    ONE_QUINTILLION("1Qi", BigInteger("1000000000000000000")),
+    TEN_QUINTILLION("10Qi", BigInteger("10000000000000000000")),
+    ONE_SEXTILLION("1Sx", BigInteger("1000000000000000000000")),
+    TEN_SEXTILLION("10Sx", BigInteger("10000000000000000000000")),
+    ONE_SEPTILLION("1Sp", BigInteger("1000000000000000000000000")),
+    TEN_SEPTILLION("10Sp", BigInteger("10000000000000000000000000")),
+    ONE_OCTILLION("1Oc", BigInteger("1000000000000000000000000000")),
+    TEN_OCTILLION("10Oc", BigInteger("10000000000000000000000000000")),
+    ONE_NONILLION("1No", BigInteger("1000000000000000000000000000000")),
+    TEN_NONILLION("10No", BigInteger("10000000000000000000000000000000")),
+    ONE_DECILLION("1Dc", BigInteger("1000000000000000000000000000000000"))
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -268,7 +290,7 @@ private fun PersonalCalculator(
                     ) {
                         Text(text = "Hours per Day", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = String.format("%.1f hrs", hoursPerDay),
+                            text = String.format(Locale.getDefault(), "%.1f hrs", hoursPerDay),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium
                         )
@@ -448,6 +470,140 @@ private fun PersonalCalculator(
             }
         }
 
+        // ===== NEW: Rate Comparison card =====
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Rate Comparison",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "What your spinning rate produces",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                buildRateComparison(mantrasPerHour).forEach { line ->
+                    Text(text = line, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+
+        // ===== NEW: Cross-Generational card =====
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Cross-Generational Practice",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "How this rate scales across lifetimes and eras",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                buildCrossGenerational(mantrasPerYear).forEach { line ->
+                    Text(text = line, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+
+        // ===== NEW: Cosmic Comparisons card =====
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Cosmic Comparisons",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "Your ${selectedPeriod.label.lowercase()} total in cosmic context",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                val cosmicLines = buildCosmicQuantityComparisons(projectedTotal)
+                if (cosmicLines.isEmpty()) {
+                    Text(
+                        text = "Increase your rate or projection period to see cosmic-scale comparisons.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                } else {
+                    cosmicLines.forEach { line ->
+                        Text(text = line, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        }
+
+        // ===== NEW: Exponential Ladder card (static reference) =====
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Exponential Ladder",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "What each order of magnitude means",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                val ladder = listOf(
+                    "1,000 mantras ≈ 9 mala circuits",
+                    "1M mantras ≈ 9,259 malas (~1 day verbal)",
+                    "1B mantras ≈ 9.26M malas (~1 year of 1 verbal practitioner)",
+                    "1T mantras ≈ 9.26B malas (~1,000 years of 1 monk)",
+                    "1Qa mantras ≈ 9.26T malas (~1M years of 1 monk)",
+                    "1Qi mantras ≈ 9.26Qa malas (~70× the age of the universe in verbal practice)",
+                    "1Sx mantras ≈ 9.26Qi malas (~1,000× the age of the universe in verbal practice)",
+                    "1Sp mantras ≈ stars in the observable universe (1Sp)"
+                )
+                ladder.forEach { line ->
+                    Text(text = line, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+
+        // ===== NEW: Shorthand Guide card =====
+        ShortHandGuideCard()
+
         Spacer(modifier = Modifier.height(32.dp))
     }
 }
@@ -463,7 +619,7 @@ private fun MonasteryCalculator(
     var hoursPerDay by remember { mutableFloatStateOf(2f) }
     var recitationRate by remember { mutableIntStateOf(100) }
     var monksCount by remember { mutableIntStateOf(1000) }
-    var selectedTarget by remember { mutableStateOf(MantraTarget.ONE_TRILLION) }
+    var selectedTarget by remember { mutableStateOf(MantraTarget.ONE_QUADRILLION) }
 
     val mantrasPerMinute = remember(rpm, mantrasPerRotation) {
         BigInteger.valueOf((rpm.toLong() * mantrasPerRotation))
@@ -531,6 +687,10 @@ private fun MonasteryCalculator(
         } else null
     }
 
+    val yearsToTargetBD = remember(wheelTimeToTarget) {
+        wheelTimeToTarget?.let { it.second.toBigDecimal() } ?: BigDecimal.ZERO
+    }
+
     val communityWheelPerYear = remember(communityWheelPerDay) {
         communityWheelPerDay * BigInteger.valueOf(365)
     }
@@ -593,7 +753,7 @@ private fun MonasteryCalculator(
                 HorizontalDivider()
 
                 Text(
-                    text = "Formula: ${rpm.toInt()} RPM x ${NumberFormatter.formatWithCommas(BigInteger.valueOf(mantrasPerRotation))} mantras x 60 min x ${String.format("%.1f", hoursPerDay)} hrs = your daily total",
+                    text = "Formula: ${rpm.toInt()} RPM x ${NumberFormatter.formatWithCommas(BigInteger.valueOf(mantrasPerRotation))} mantras x 60 min x ${String.format(Locale.getDefault(), "%.1f", hoursPerDay)} hrs = your daily total",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 )
@@ -610,9 +770,9 @@ private fun MonasteryCalculator(
                     StatRow(
                         label = "1 monk, 8 hrs/day",
                         value = when {
-                            yearsVal >= 1.0 -> String.format("%.1f years", yearsVal)
-                            yearsVal * 12 >= 1.0 -> String.format("%.1f months", yearsVal * 12)
-                            else -> String.format("%.0f days", verbalDaysForMyDay.toFloat())
+                            yearsVal >= 1.0 -> String.format(Locale.getDefault(), "%.1f years", yearsVal)
+                            yearsVal * 12 >= 1.0 -> String.format(Locale.getDefault(), "%.1f months", yearsVal * 12)
+                            else -> String.format(Locale.getDefault(), "%.0f days", verbalDaysForMyDay.toFloat())
                         }
                     )
                     StatRow(
@@ -621,7 +781,7 @@ private fun MonasteryCalculator(
                     )
                     StatRow(
                         label = "Monks to match your day",
-                        value = String.format("%,.0f reciting 8 hrs each", monksForOneDayEquivalent)
+                        value = String.format(Locale.getDefault(), "%,.0f reciting 8 hrs each", monksForOneDayEquivalent)
                     )
                 }
             }
@@ -697,7 +857,7 @@ private fun MonasteryCalculator(
                     ) {
                         Text(text = "Practice Hours per Day", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = String.format("%.1f hrs", hoursPerDay),
+                            text = String.format(Locale.getDefault(), "%.1f hrs", hoursPerDay),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium
                         )
@@ -873,16 +1033,16 @@ private fun MonasteryCalculator(
                     verbalTimeToTarget?.let { (days, years, months) ->
                         Text(
                             text = when {
-                                years >= 1.0 -> String.format("%.1f years", years)
-                                months >= 1.0 -> String.format("%.1f months", months)
-                                else -> String.format("%.0f days", days)
+                                years >= 1.0 -> String.format(Locale.getDefault(), "%.1f years", years)
+                                months >= 1.0 -> String.format(Locale.getDefault(), "%.1f months", months)
+                                else -> String.format(Locale.getDefault(), "%.0f days", days)
                             },
                             style = MaterialTheme.typography.displaySmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = String.format("(%,.0f days)", days),
+                            text = String.format(Locale.getDefault(), "(%,.0f days)", days),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                         )
@@ -896,23 +1056,23 @@ private fun MonasteryCalculator(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "With prayer wheels at your rate (${String.format("%.1f", hoursPerDay)} hrs/day each)",
+                        text = "With prayer wheels at your rate (${String.format(Locale.getDefault(), "%.1f", hoursPerDay)} hrs/day each)",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
                     wheelTimeToTarget?.let { (days, years, months) ->
                         Text(
                             text = when {
-                                years >= 1.0 -> String.format("%.1f years", years)
-                                months >= 1.0 -> String.format("%.1f months", months)
-                                else -> String.format("%.0f days", days)
+                                years >= 1.0 -> String.format(Locale.getDefault(), "%.1f years", years)
+                                months >= 1.0 -> String.format(Locale.getDefault(), "%.1f months", months)
+                                else -> String.format(Locale.getDefault(), "%.0f days", days)
                             },
                             style = MaterialTheme.typography.displaySmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.tertiary
                         )
                         Text(
-                            text = String.format("(%,.0f days)", days),
+                            text = String.format(Locale.getDefault(), "(%,.0f days)", days),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                         )
@@ -989,15 +1149,175 @@ private fun MonasteryCalculator(
             }
         }
 
+        // ===== NEW: Wheel-vs-World card =====
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Wheel vs World",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "Your community's output in human terms",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                val verbalEquivalentMonks = if (communityVerbalPerDay > BigInteger.ZERO) {
+                    communityWheelPerDay.toBigDecimal()
+                        .divide(communityVerbalPerDay.toBigDecimal(), 0, RoundingMode.HALF_UP)
+                        .toBigInteger()
+                } else BigInteger.ONE
+                StatRow(
+                    label = "Equivalent verbal community size",
+                    value = "${NumberFormatter.format(verbalEquivalentMonks)}× larger"
+                )
+                val worldPopPerYear = communityWheelPerYear.divide(CosmicReference.WORLD_POPULATION)
+                StatRow(
+                    label = "Per year vs world population",
+                    value = "${NumberFormatter.format(worldPopPerYear)} mantras per person on Earth"
+                )
+                val percentOf1B = NumberFormatter.formatPercent(communityWheelPerDay, BigInteger.valueOf(1_000_000_000L))
+                StatRow(
+                    label = "Daily output as % of 1B milestone",
+                    value = percentOf1B
+                )
+            }
+        }
+
+        // ===== NEW: Cosmic Time to target card =====
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Cosmic Time to ${selectedTarget.label}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "Time to reach target in cosmic context",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                if (yearsToTargetBD > BigDecimal.ZERO) {
+                    Text(
+                        text = NumberFormatter.humanizeYearsWithCosmicContext(yearsToTargetBD),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    val cosmicTimeLines = buildCosmicTimeComparisons(yearsToTargetBD)
+                    if (cosmicTimeLines.isNotEmpty()) {
+                        HorizontalDivider()
+                        cosmicTimeLines.forEach { line ->
+                            Text(text = line, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+        }
+
+        // ===== NEW: Cross-Cultural Time Scales card =====
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Cross-Cultural Time Scales",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "How this compares to cosmic cycles across traditions",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                val crossCulturalLines = buildCrossCulturalTimeComparisons(yearsToTargetBD)
+                if (crossCulturalLines.isEmpty()) {
+                    Text(
+                        text = "Choose a larger target to see cross-cultural time comparisons.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                } else {
+                    crossCulturalLines.forEach { line ->
+                        Text(text = line, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        }
+
+        // ===== NEW: Fiction & Non-Fiction References card =====
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Fiction & Non-Fiction References",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "Your community's yearly output across literature and cosmology",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                val fictionLines = buildFictionComparisons(communityWheelPerYear)
+                if (fictionLines.isEmpty()) {
+                    Text(
+                        text = "Increase your community size or rate to see fiction-scale comparisons.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                } else {
+                    fictionLines.forEach { line ->
+                        Text(text = line, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        }
+
+        // ===== NEW: Shorthand Guide card =====
+        ShortHandGuideCard()
+
         Spacer(modifier = Modifier.height(32.dp))
     }
 }
 
 private fun formatHoursReadably(hours: Float): String {
     return when {
-        hours >= 8766f -> String.format("%,.1f years", hours / 8766f)
-        hours >= 48f -> String.format("%,.0f days", hours / 24f)
-        else -> String.format("%,.1f hours", hours)
+        hours >= 8766f -> String.format(Locale.getDefault(), "%,.1f years", hours / 8766f)
+        hours >= 48f -> String.format(Locale.getDefault(), "%,.0f days", hours / 24f)
+        else -> String.format(Locale.getDefault(), "%,.1f hours", hours)
     }
 }
 
@@ -1049,14 +1369,18 @@ private fun StatRow(
 
 private fun buildComparisons(totalMantras: BigInteger): List<String> {
     val comparisons = mutableListOf<String>()
+
+    // NEW: Cosmic/scientific quantity comparisons first (only shown when applicable)
+    comparisons.addAll(buildCosmicQuantityComparisons(totalMantras))
+
+    // PRESERVED: Original comparisons
     val verbalPerHour = BigInteger.valueOf(6_000L)
     val mala = BigInteger.valueOf(108)
     val hundredM = BigInteger.valueOf(100_000_000L)
     val worldPop = BigInteger.valueOf(8_000_000_000L)
 
     if (totalMantras >= BigInteger.valueOf(10_000)) {
-        val circuits = totalMantras.divide(mala)
-        comparisons.add("${NumberFormatter.format(circuits)} complete mala circuits (108 each)")
+        comparisons.add(NumberFormatter.formatMalaEquivalent(totalMantras))
     }
 
     if (totalMantras >= BigInteger.valueOf(100_000)) {
@@ -1065,7 +1389,7 @@ private fun buildComparisons(totalMantras: BigInteger): List<String> {
         val yearsBD = hoursBD.divide(BigDecimal(8766), 1, RoundingMode.HALF_UP)
         comparisons.add(
             if (yearsBD >= BigDecimal.ONE) {
-                "Same as 1 person reciting non-stop for ${yearsBD.stripTrailingZeros().toPlainString()} years"
+                "Same as 1 person reciting non-stop for ${NumberFormatter.humanizeYearsWithCosmicContext(yearsBD)}"
             } else {
                 val daysBD = hoursBD.divide(BigDecimal(24), 1, RoundingMode.HALF_UP)
                 if (daysBD >= BigDecimal.ONE) {
@@ -1079,7 +1403,7 @@ private fun buildComparisons(totalMantras: BigInteger): List<String> {
 
     if (totalMantras >= hundredM) {
         val count = totalMantras.divide(hundredM)
-        comparisons.add("${NumberFormatter.format(count)} × the traditional 100M milestone (bhumi)")
+        comparisons.add("${NumberFormatter.format(count)}× the traditional 100M milestone (bhumi)")
     }
 
     if (totalMantras >= worldPop) {
@@ -1091,18 +1415,7 @@ private fun buildComparisons(totalMantras: BigInteger): List<String> {
 }
 
 private fun buildLifetimeComparisons(mantrasPerYear: BigInteger): List<String> {
-    val comparisons = mutableListOf<String>()
-
-    val tenYears = mantrasPerYear * BigInteger.valueOf(10)
-    comparisons.add("10 years: ${NumberFormatter.formatWithFull(tenYears)}")
-
-    val oneLifetime = mantrasPerYear * BigInteger.valueOf(80)
-    comparisons.add("1 human lifetime (80 yrs): ${NumberFormatter.formatWithFull(oneLifetime)}")
-
-    val thousandYears = mantrasPerYear * BigInteger.valueOf(1000)
-    comparisons.add("1,000 years: ${NumberFormatter.formatWithFull(thousandYears)}")
-
-    return comparisons
+    return buildCrossGenerational(mantrasPerYear)
 }
 
 private fun buildTimeToMilestones(mantrasPerMonth: BigInteger): List<String> {
@@ -1111,26 +1424,38 @@ private fun buildTimeToMilestones(mantrasPerMonth: BigInteger): List<String> {
     val milestones = mutableListOf<String>()
 
     val targets = listOf(
-        100_000_000L to "100M",
-        1_000_000_000L to "1B",
-        10_000_000_000L to "10B",
-        1_000_000_000_000L to "1T",
-        10_000_000_000_000L to "10T",
-        1_000_000_000_000_000L to "1Qa"
+        BigInteger.valueOf(100_000_000L) to "100M",
+        BigInteger.valueOf(1_000_000_000L) to "1B",
+        BigInteger.valueOf(10_000_000_000L) to "10B",
+        BigInteger.valueOf(100_000_000_000L) to "100B",
+        BigInteger.valueOf(1_000_000_000_000L) to "1T",
+        BigInteger.valueOf(10_000_000_000_000L) to "10T",
+        BigInteger.valueOf(100_000_000_000_000L) to "100T",
+        BigInteger("1000000000000000") to "1Qa",
+        BigInteger("10000000000000000") to "10Qa",
+        BigInteger("1000000000000000000") to "1Qi",
+        BigInteger("10000000000000000000") to "10Qi",
+        BigInteger("1000000000000000000000") to "1Sx",
+        BigInteger("10000000000000000000000") to "10Sx",
+        BigInteger("1000000000000000000000000") to "1Sp",
+        BigInteger("10000000000000000000000000") to "10Sp",
+        BigInteger("1000000000000000000000000000") to "1Oc",
+        BigInteger("10000000000000000000000000000") to "10Oc",
+        BigInteger("1000000000000000000000000000000") to "1No",
+        BigInteger("10000000000000000000000000000000") to "10No",
+        BigInteger("1000000000000000000000000000000000") to "1Dc"
     )
 
-    for ((target, label) in targets) {
-        val targetBI = BigInteger.valueOf(target)
-        val months = targetBI.toBigDecimal()
+    for ((targetBI, label) in targets) {
+        val monthsBD = targetBI.toBigDecimal()
             .divide(mantrasPerMonth.toBigDecimal(), 1, RoundingMode.HALF_UP)
-        val years = months.divide(BigDecimal(12), 1, RoundingMode.HALF_UP)
-        milestones.add(
-            if (years < BigDecimal.ONE) {
-                "Reaching $label mantras: ${months} months"
-            } else {
-                "Reaching $label mantras: ${years} years"
-            }
-        )
+        val yearsBD = monthsBD.divide(BigDecimal(12), 1, RoundingMode.HALF_UP)
+        val timeStr = if (yearsBD < BigDecimal.ONE) {
+            "${monthsBD.stripTrailingZeros().toPlainString()} months"
+        } else {
+            NumberFormatter.humanizeYearsWithCosmicContext(yearsBD)
+        }
+        milestones.add("Reaching $label mantras: $timeStr")
     }
 
     return milestones
@@ -1142,26 +1467,38 @@ private fun buildMonasteryMilestones(mantrasPerDayTotal: BigInteger): List<Strin
     val milestones = mutableListOf<String>()
 
     val targets = listOf(
-        1_000_000_000L to "1B",
-        10_000_000_000L to "10B",
-        100_000_000_000L to "100B",
-        1_000_000_000_000L to "1T",
-        10_000_000_000_000L to "10T",
-        1_000_000_000_000_000L to "1Qa"
+        BigInteger.valueOf(100_000_000L) to "100M",
+        BigInteger.valueOf(1_000_000_000L) to "1B",
+        BigInteger.valueOf(10_000_000_000L) to "10B",
+        BigInteger.valueOf(100_000_000_000L) to "100B",
+        BigInteger.valueOf(1_000_000_000_000L) to "1T",
+        BigInteger.valueOf(10_000_000_000_000L) to "10T",
+        BigInteger.valueOf(100_000_000_000_000L) to "100T",
+        BigInteger("1000000000000000") to "1Qa",
+        BigInteger("10000000000000000") to "10Qa",
+        BigInteger("1000000000000000000") to "1Qi",
+        BigInteger("10000000000000000000") to "10Qi",
+        BigInteger("1000000000000000000000") to "1Sx",
+        BigInteger("10000000000000000000000") to "10Sx",
+        BigInteger("1000000000000000000000000") to "1Sp",
+        BigInteger("10000000000000000000000000") to "10Sp",
+        BigInteger("1000000000000000000000000000") to "1Oc",
+        BigInteger("10000000000000000000000000000") to "10Oc",
+        BigInteger("1000000000000000000000000000000") to "1No",
+        BigInteger("10000000000000000000000000000000") to "10No",
+        BigInteger("1000000000000000000000000000000000") to "1Dc"
     )
 
-    for ((target, label) in targets) {
-        val targetBI = BigInteger.valueOf(target)
-        val days = targetBI.toBigDecimal()
+    for ((targetBI, label) in targets) {
+        val daysBD = targetBI.toBigDecimal()
             .divide(mantrasPerDayTotal.toBigDecimal(), 1, RoundingMode.HALF_UP)
-        val years = days.divide(BigDecimal("365.25"), 1, RoundingMode.HALF_UP)
-        milestones.add(
-            if (years < BigDecimal.ONE) {
-                "Reaching $label: ${days} days"
-            } else {
-                "Reaching $label: ${years} years"
-            }
-        )
+        val yearsBD = daysBD.divide(BigDecimal("365.25"), 1, RoundingMode.HALF_UP)
+        val timeStr = if (yearsBD < BigDecimal.ONE) {
+            "${daysBD.stripTrailingZeros().toPlainString()} days"
+        } else {
+            NumberFormatter.humanizeYearsWithCosmicContext(yearsBD)
+        }
+        milestones.add("Reaching $label: $timeStr")
     }
 
     return milestones
@@ -1169,15 +1506,15 @@ private fun buildMonasteryMilestones(mantrasPerDayTotal: BigInteger): List<Strin
 
 private fun longToSliderPosition(value: Long): Float {
     if (value <= 1) return 0f
-    if (value >= 1_000_000_000_000L) return 1f
-    val logMax = 12f
+    if (value >= 1_000_000_000_000_000_000L) return 1f  // Cap at 1Qi (10^18)
+    val logMax = 18f  // log10 of 10^18
     val logValue = kotlin.math.ln(value.toFloat()) / kotlin.math.ln(10f)
     return (logValue / logMax).coerceIn(0f, 1f)
 }
 
 private fun sliderPositionToLongValue(position: Float): Long {
     if (position <= 0f) return 1L
-    val logMax = 12f
+    val logMax = 18f  // log10 of 10^18
     val logValue = position * logMax
     val value = 10.0.pow(logValue.toDouble())
     return value.toLong().coerceIn(1L, Long.MAX_VALUE)
