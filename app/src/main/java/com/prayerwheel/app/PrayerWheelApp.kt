@@ -35,14 +35,19 @@ class PrayerWheelApp : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // Initialize Room database
+        // Initialize Room database.
+        // `fallbackToDestructiveMigration()` covers schema gaps that have no
+        // explicit migration defined — notably the v1→v2 path, whose v1 schema
+        // is no longer recoverable. Without this, a v1 user crashes on launch
+        // with `IllegalStateException: A migration from 1 to 2 was required
+        // but not found`. Losing early-dev data is preferable to crashing.
         database = Room.databaseBuilder(
             applicationContext,
             AppDatabase::class.java,
             "prayer_wheel_database"
         )
             .addMigrations(AppDatabase.MIGRATION_2_3, MIGRATION_3_4)
-            .fallbackToDestructiveMigration(false)
+            .fallbackToDestructiveMigration()
             .build()
 
         // Initialize DataStore preferences

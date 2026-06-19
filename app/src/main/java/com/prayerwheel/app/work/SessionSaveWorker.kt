@@ -1,6 +1,7 @@
 package com.prayerwheel.app.work
 
 import android.content.Context
+import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -81,30 +82,37 @@ class SessionSaveWorker(
         val sessionDao = database.sessionDao()
         val lifetimeStatsDao = database.lifetimeStatsDao()
 
-        sessionDao.insert(session)
+        // Wrap both writes in a single Room transaction. Without this, a crash
+        // between `sessionDao.insert` and `lifetimeStatsDao.upsert` lets
+        // WorkManager retry the worker, re-running `insert` and producing a
+        // duplicate session row. Atomicity here means a failed transaction
+        // leaves nothing inserted, so retries are safe.
+        database.withTransaction {
+            sessionDao.insert(session)
 
-        val existing = lifetimeStatsDao.getStats()
-        val newStats = existing?.copy(
-            totalRotations = existing.totalRotations + session.rotationCount,
-            totalMantras = existing.totalMantras + session.totalMantras,
-            sessionsCompleted = existing.sessionsCompleted + 1,
-            totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
-            averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                (existing.totalSpinningTimeSeconds + sessionDurationSeconds) /
-                    (existing.sessionsCompleted + 1)
-            } else {
-                sessionDurationSeconds
-            }
-        ) ?: LifetimeStats(
-            id = 1,
-            totalRotations = session.rotationCount,
-            totalMantras = session.totalMantras,
-            sessionsCompleted = 1,
-            firstSessionAt = session.startedAt,
-            totalSpinningTimeSeconds = sessionDurationSeconds,
-            averageSessionDurationSeconds = sessionDurationSeconds
-        )
-        lifetimeStatsDao.upsert(newStats)
+            val existing = lifetimeStatsDao.getStats()
+            val newStats = existing?.copy(
+                totalRotations = existing.totalRotations + session.rotationCount,
+                totalMantras = existing.totalMantras + session.totalMantras,
+                sessionsCompleted = existing.sessionsCompleted + 1,
+                totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
+                averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
+                    (existing.totalSpinningTimeSeconds + sessionDurationSeconds) /
+                        (existing.sessionsCompleted + 1)
+                } else {
+                    sessionDurationSeconds
+                }
+            ) ?: LifetimeStats(
+                id = 1,
+                totalRotations = session.rotationCount,
+                totalMantras = session.totalMantras,
+                sessionsCompleted = 1,
+                firstSessionAt = session.startedAt,
+                totalSpinningTimeSeconds = sessionDurationSeconds,
+                averageSessionDurationSeconds = sessionDurationSeconds
+            )
+            lifetimeStatsDao.upsert(newStats)
+        }
 
         return Result.success()
     }
@@ -133,8 +141,10 @@ class SessionSaveWorker(
 
         /**
          * Builds the [androidx.work.OneTimeWorkRequest] for saving the in-flight
-         * session and enqueues it as unique work with [ExistingWorkPolicy.REPLACE]
-         * under [UNIQUE_WORK_NAME].
+         * session and enqueues it as unique work with [ExistingWorkPolicy.KEEP]
+         * under [UNIQUE_WORK_NAME]. KEEP (rather than REPLACE) ensures that once
+         * a save has completed, a second `onCleared`/relaunch race does not
+         * re-execute the work and insert a duplicate session.
          *
          * @return `true` if work was enqueued; `false` if there is no session to
          *   save ([startedAt] is null or [rotations] is 0, matching the previous
@@ -180,7 +190,7 @@ class SessionSaveWorker(
                 .build()
 
             WorkManager.getInstance(context)
-                .enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
+                .enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.KEEP, request)
 
             return true
         }
