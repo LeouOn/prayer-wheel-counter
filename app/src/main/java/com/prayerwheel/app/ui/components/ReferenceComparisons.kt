@@ -155,14 +155,14 @@ fun buildRateComparison(mantrasPerHour: BigInteger): List<String> {
     val onePersonOneYear = BigDecimal("52596000")
     val yearsPerHour = mantrasPerHour.toBigDecimal().divide(onePersonOneYear, 1, RoundingMode.HALF_UP)
     if (yearsPerHour >= BigDecimal("0.1")) {
-        result.add("Each hour = ${yearsPerHour.stripTrailingZeros().toPlainString()} years of 1 person reciting 24/7 at 100 mantras/min")
+        result.add("Each hour of spinning releases as many mantras as 1 person reciting 24/7 for ${yearsPerHour.stripTrailingZeros().toPlainString()} years")
     }
 
     // 1 monk reciting 8 hrs/day produces: 100 × 60 × 8 = 48,000 mantras/day
     val oneMonkOneDay = BigInteger("48000")
     if (mantrasPerHour >= oneMonkOneDay) {
         val monks = mantrasPerHour.divide(oneMonkOneDay)
-        result.add("Each hour = ${NumberFormatter.format(monks)} monks reciting 8 hrs/day for 1 hour")
+        result.add("Each hour of spinning releases as many mantras as ${NumberFormatter.format(monks)} monks reciting 8 hrs/day")
     }
 
     // The traditional 100M milestone
@@ -178,7 +178,7 @@ fun buildRateComparison(mantrasPerHour: BigInteger): List<String> {
     val mala = CosmicReference.MALA_BEADS
     if (mantrasPerHour >= mala.multiply(BigInteger("1000"))) {
         val circuits = mantrasPerHour.divide(mala)
-        result.add("Each hour = ${NumberFormatter.format(circuits)} complete mala circuits (108 each)")
+        result.add("Each hour of spinning completes ${NumberFormatter.format(circuits)} mala circuits (108 each)")
     }
 
     return if (result.isEmpty()) listOf("Each hour = ${NumberFormatter.format(mantrasPerHour)} mantras") else result
@@ -209,10 +209,10 @@ fun buildCrossGenerational(mantrasPerYear: BigInteger): List<String> {
         Span(10_000L, "10,000 years (~400 generations)", null),
         Span(100_000L, "100,000 years (~4,000 generations)", null),
         Span(1_000_000L, "1 million years (~40,000 generations)", null),
-        Span(10_000_000L, "10 million years (~400,000 generations, early mammals)", "1.5× time since dinosaurs"),
+        Span(10_000_000L, "10 million years (~400,000 generations, early mammals)", null),
         Span(100_000_000L, "100 million years (~4M generations, since T-rex)", "1.5× time since dinosaurs"),
-        Span(1_000_000_000L, "1 billion years (~40M generations)", "1.2× time until Sun dies"),
-        Span(10_000_000_000L, "10 billion years (older than the universe)", "5× remaining lifetime of the Sun")
+        Span(1_000_000_000L, "1 billion years (~40M generations)", "0.2× remaining lifetime of the Sun"),
+        Span(10_000_000_000L, "10 billion years (~70% the age of the universe)", "2× remaining lifetime of the Sun")
     )
 
     return spans.map { span ->
