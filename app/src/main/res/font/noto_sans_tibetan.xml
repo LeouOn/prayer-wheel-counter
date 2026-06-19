@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tibetan font resource — upgrade path for Noto Sans Tibetan.
+  
+  WHEN YOU PLACE noto_sans_tibetan.ttf IN THIS DIRECTORY:
+  1. Uncomment the <font> element below
+  2. In app/src/main/java/com/.../ui/theme/Type.kt, change:
+       val TibetanFont = FontFamily.Serif
+     to:
+       val TibetanFont = FontFamily(Font(R.font.noto_sans_tibetan))
+     (also add: import androidx.compose.ui.text.font.Font)
+  3. Rebuild — all Tibetan text will render with correct stacking glyphs
+  
+  Download: https://fonts.google.com/noto/specimen/Noto+Sans+Tibetan
+  License: SIL Open Font License 1.1 (free for any use)
+-->
+<font-family xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Uncomment when .ttf is placed:
+    <font
+        android:font="@font/noto_sans_tibetan"
+        android:fontStyle="normal"
+        android:fontWeight="400" />
+    -->
+</font-family>

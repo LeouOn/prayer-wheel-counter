@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Prayer Wheel home-screen widget metadata.
+
+  Battery discipline: updatePeriodMillis is deliberately 0. The widget is
+  refreshed ONLY by event-driven calls to PrayerWheelWidget().updateAll()
+  (rotation completion, session start/end). No periodic polling wake-ups.
+  See WheelViewModel.onRotationComplete() and the plan section 12.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="150dp"
+    android:minResizeWidth="160dp"
+    android:minResizeHeight="130dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:previewImage="@mipmap/ic_launcher"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

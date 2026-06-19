@@ -1,6 +1,7 @@
 package com.prayerwheel.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -11,8 +12,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
@@ -27,6 +31,8 @@ class MainActivity : ComponentActivity() {
 
     private var wheelViewModel: WheelViewModel? = null
 
+    private var widgetStartRequested by mutableStateOf(false)
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
@@ -36,6 +42,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         requestNotificationPermissionIfNeeded()
+
+        // "start_session" extra is sent by PrayerWheelWidget's Spin button.
+        widgetStartRequested = intent?.getBooleanExtra(EXTRA_START_SESSION, false) ?: false
 
         val app = application as PrayerWheelApp
 
@@ -65,6 +74,13 @@ class MainActivity : ComponentActivity() {
                     )
                     wheelViewModel = viewModel
 
+                    LaunchedEffect(widgetStartRequested) {
+                        if (widgetStartRequested) {
+                            viewModel.startSessionFromWidget()
+                            widgetStartRequested = false
+                        }
+                    }
+
                     val navController = rememberNavController()
 
                     PrayerWheelNavHost(
@@ -89,6 +105,13 @@ class MainActivity : ComponentActivity() {
         wheelViewModel?.setAppInForeground(true)
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_START_SESSION, false)) {
+            widgetStartRequested = true
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         if (isFinishing) {
@@ -110,5 +133,9 @@ class MainActivity : ComponentActivity() {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
+    }
+
+    companion object {
+        const val EXTRA_START_SESSION = "start_session"
     }
 }

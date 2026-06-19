@@ -75,4 +75,11 @@ dependencies {
 
     // Navigation (for future screens)
     implementation(libs.navigation.compose)
+
+    // Glance (home-screen widget)
+    implementation(libs.androidx.glance.appwidget)
+    implementation(libs.androidx.glance.material3)
+
+    // WorkManager (background session save)
+    implementation(libs.androidx.work.runtime.ktx)
 }

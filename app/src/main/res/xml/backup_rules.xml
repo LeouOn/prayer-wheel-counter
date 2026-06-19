@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android Auto-Backup rules for Prayer Wheel Counter.
+  
+  Includes:
+  - Room database (sessions + lifetime stats)
+  - DataStore preferences (settings, saved wheels, achievements)
+  
+  Excludes:
+  - Cache directories (not needed for restore)
+  - No-backup directory (if any)
+-->
+<full-backup-content>
+    <!-- Room database files -->
+    <include domain="database" path="." />
+    <!-- DataStore preferences -->
+    <include domain="sharedpref" path="." />
+    <!-- App-specific files (exported backups etc) -->
+    <include domain="file" path="." />
+</full-backup-content>

@@ -12,6 +12,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import androidx.room.Room
 import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.data.db.AppDatabase
+import com.prayerwheel.app.data.db.MIGRATION_3_4
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "user_preferences")
 
@@ -40,6 +41,7 @@ class PrayerWheelApp : Application() {
             AppDatabase::class.java,
             "prayer_wheel_database"
         )
+            .addMigrations(AppDatabase.MIGRATION_2_3, MIGRATION_3_4)
             .fallbackToDestructiveMigration(false)
             .build()
 
