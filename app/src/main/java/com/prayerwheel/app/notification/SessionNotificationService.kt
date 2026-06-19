@@ -18,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.math.BigInteger
+import java.util.Locale
 
 
 /**
@@ -135,6 +136,7 @@ class SessionNotificationService : Service() {
 
     // ── Notification helpers ─────────────────────────────────────────────────
 
+    @android.annotation.SuppressLint("MissingPermission")
     private fun updateNotification() {
         companionMantraCount = mantraCountRaw
         val notification = buildNotification(sessionDurationSeconds, mantraCountRaw, isPaused)
@@ -346,7 +348,7 @@ class SessionNotificationService : Service() {
             val hours = totalSeconds / 3600
             val minutes = (totalSeconds % 3600) / 60
             val seconds = totalSeconds % 60
-            return String.format("%02d:%02d:%02d", hours, minutes, seconds)
+            return String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds)
         }
 
         // ── Mantra count formatting ──────────────────────────────────────────

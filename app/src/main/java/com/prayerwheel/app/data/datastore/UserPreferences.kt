@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.prayerwheel.app.data.model.SavedWheel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -111,6 +112,20 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         val NUMBER_NOTATION = stringPreferencesKey("number_notation")
         val BACKGROUND_VIBRATION_ENABLED = booleanPreferencesKey("background_vibration_enabled")
         val VIBRATION_INTENSITY = floatPreferencesKey("vibration_intensity")
+        val UNLOCKED_ACHIEVEMENTS = stringSetPreferencesKey("unlocked_achievements")
+        val REMINDER_MORNING_ENABLED = booleanPreferencesKey("reminder_morning_enabled")
+        val REMINDER_EVENING_ENABLED = booleanPreferencesKey("reminder_evening_enabled")
+        val REMINDER_END_OF_DAY_ENABLED = booleanPreferencesKey("reminder_end_of_day_enabled")
+        val REMINDER_MORNING_HOUR = intPreferencesKey("reminder_morning_hour")
+        val REMINDER_EVENING_HOUR = intPreferencesKey("reminder_evening_hour")
+        val REMINDER_END_OF_DAY_HOUR = intPreferencesKey("reminder_end_of_day_hour")
+        val REMINDER_MORNING_MINUTE = intPreferencesKey("reminder_morning_minute")
+        val REMINDER_EVENING_MINUTE = intPreferencesKey("reminder_evening_minute")
+        val REMINDER_END_OF_DAY_MINUTE = intPreferencesKey("reminder_end_of_day_minute")
+        val SESSION_MERGE_THRESHOLD_MS = longPreferencesKey("session_merge_threshold_ms")
+        val AUTO_LABEL_SESSIONS = booleanPreferencesKey("auto_label_sessions")
+        val WHEEL_MASS = floatPreferencesKey("wheel_mass")
+        val JE_NYER_ENABLED = booleanPreferencesKey("je_nyer_enabled")
     }
 
     val selectedMantra: Flow<String> = dataStore.data.map { preferences ->
@@ -273,6 +288,62 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
 
     val vibrationIntensity: Flow<Float> = dataStore.data.map { preferences ->
         preferences[Keys.VIBRATION_INTENSITY] ?: 1.0f
+    }
+
+    val wheelMass: Flow<Float> = dataStore.data.map { preferences ->
+        preferences[Keys.WHEEL_MASS] ?: DEFAULT_WHEEL_MASS
+    }
+
+    val unlockedAchievements: Flow<Set<String>> = dataStore.data.map { preferences ->
+        preferences[Keys.UNLOCKED_ACHIEVEMENTS] ?: emptySet()
+    }
+
+    val reminderMorningEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[Keys.REMINDER_MORNING_ENABLED] ?: false
+    }
+
+    val reminderEveningEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[Keys.REMINDER_EVENING_ENABLED] ?: false
+    }
+
+    val reminderEndOfDayEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[Keys.REMINDER_END_OF_DAY_ENABLED] ?: false
+    }
+
+    val reminderMorningHour: Flow<Int> = dataStore.data.map { preferences ->
+        preferences[Keys.REMINDER_MORNING_HOUR] ?: 7
+    }
+
+    val reminderEveningHour: Flow<Int> = dataStore.data.map { preferences ->
+        preferences[Keys.REMINDER_EVENING_HOUR] ?: 19
+    }
+
+    val reminderEndOfDayHour: Flow<Int> = dataStore.data.map { preferences ->
+        preferences[Keys.REMINDER_END_OF_DAY_HOUR] ?: 21
+    }
+
+    val reminderMorningMinute: Flow<Int> = dataStore.data.map { preferences ->
+        preferences[Keys.REMINDER_MORNING_MINUTE] ?: 0
+    }
+
+    val reminderEveningMinute: Flow<Int> = dataStore.data.map { preferences ->
+        preferences[Keys.REMINDER_EVENING_MINUTE] ?: 0
+    }
+
+    val reminderEndOfDayMinute: Flow<Int> = dataStore.data.map { preferences ->
+        preferences[Keys.REMINDER_END_OF_DAY_MINUTE] ?: 30
+    }
+
+    val sessionMergeThresholdMs: Flow<Long> = dataStore.data.map { preferences ->
+        preferences[Keys.SESSION_MERGE_THRESHOLD_MS] ?: 300000L
+    }
+
+    val autoLabelSessions: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[Keys.AUTO_LABEL_SESSIONS] ?: true
+    }
+
+    val jeNyerEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[Keys.JE_NYER_ENABLED] ?: true
     }
 
     suspend fun setSelectedMantra(mantra: String) {
@@ -513,6 +584,91 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
+    suspend fun setWheelMass(value: Float) {
+        dataStore.edit { preferences ->
+            preferences[Keys.WHEEL_MASS] = value.coerceIn(0.5f, 3.0f)
+        }
+    }
+
+    suspend fun unlockAchievement(achievementId: String) {
+        dataStore.edit { preferences ->
+            val current = preferences[Keys.UNLOCKED_ACHIEVEMENTS] ?: emptySet()
+            preferences[Keys.UNLOCKED_ACHIEVEMENTS] = current + achievementId
+        }
+    }
+
+    suspend fun setReminderMorningEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[Keys.REMINDER_MORNING_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setReminderEveningEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[Keys.REMINDER_EVENING_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setReminderEndOfDayEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[Keys.REMINDER_END_OF_DAY_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setReminderMorningHour(hour: Int) {
+        dataStore.edit { preferences ->
+            preferences[Keys.REMINDER_MORNING_HOUR] = hour.coerceIn(0, 23)
+        }
+    }
+
+    suspend fun setReminderEveningHour(hour: Int) {
+        dataStore.edit { preferences ->
+            preferences[Keys.REMINDER_EVENING_HOUR] = hour.coerceIn(0, 23)
+        }
+    }
+
+    suspend fun setReminderEndOfDayHour(hour: Int) {
+        dataStore.edit { preferences ->
+            preferences[Keys.REMINDER_END_OF_DAY_HOUR] = hour.coerceIn(0, 23)
+        }
+    }
+
+    suspend fun setReminderMorningMinute(minute: Int) {
+        dataStore.edit { preferences ->
+            preferences[Keys.REMINDER_MORNING_MINUTE] = minute.coerceIn(0, 59)
+        }
+    }
+
+    suspend fun setReminderEveningMinute(minute: Int) {
+        dataStore.edit { preferences ->
+            preferences[Keys.REMINDER_EVENING_MINUTE] = minute.coerceIn(0, 59)
+        }
+    }
+
+    suspend fun setReminderEndOfDayMinute(minute: Int) {
+        dataStore.edit { preferences ->
+            preferences[Keys.REMINDER_END_OF_DAY_MINUTE] = minute.coerceIn(0, 59)
+        }
+    }
+
+    suspend fun setSessionMergeThresholdMs(thresholdMs: Long) {
+        dataStore.edit { preferences ->
+            preferences[Keys.SESSION_MERGE_THRESHOLD_MS] = thresholdMs.coerceAtLeast(0L)
+        }
+    }
+
+    suspend fun setAutoLabelSessions(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[Keys.AUTO_LABEL_SESSIONS] = enabled
+        }
+    }
+
+    suspend fun setJeNyerEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[Keys.JE_NYER_ENABLED] = enabled
+        }
+    }
+
     private fun parseSavedWheelsJson(jsonString: String): List<SavedWheel> {
         return try {
             val jsonArray = JSONArray(jsonString)
@@ -562,6 +718,7 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         const val DEFAULT_THEME = "system"
         const val DEFAULT_FRICTION = 0.97f
         const val DEFAULT_HAPTIC_ENABLED = true
+        const val DEFAULT_WHEEL_MASS = 1.0f
         
         const val DEFAULT_DEDICATION_TEXT = "May the merit accumulated through this practice benefit all sentient beings, that they may realize the nature of Buddha's wisdom and be freed from samsara."
 
