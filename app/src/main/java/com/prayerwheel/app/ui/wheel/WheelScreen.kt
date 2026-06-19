@@ -1,5 +1,6 @@
 package com.prayerwheel.app.ui.wheel
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -98,16 +99,20 @@ import com.prayerwheel.app.data.datastore.SpinMode
 import com.prayerwheel.app.data.datastore.ViewMode
 import com.prayerwheel.app.data.model.Mantra
 import com.prayerwheel.app.data.model.SavedWheel
+import com.prayerwheel.app.data.model.Session
 import com.prayerwheel.app.data.model.WheelSkin
 import com.prayerwheel.app.data.model.WheelSkins
+import com.prayerwheel.app.ui.components.bounceClick
 import com.prayerwheel.app.ui.components.CapacitySlider
 import com.prayerwheel.app.ui.components.CounterDisplay
 import com.prayerwheel.app.ui.components.IntentionDialog
 import com.prayerwheel.app.ui.components.MantraSelector
 import com.prayerwheel.app.ui.components.NumberFormatter
 import com.prayerwheel.app.ui.components.SavedWheelsManager
+import com.prayerwheel.app.ui.components.MilestoneCelebration
 import com.prayerwheel.app.ui.components.ShareIntentionDialog
 import com.prayerwheel.app.ui.components.SpinModeSelector
+import com.prayerwheel.app.ui.components.TodayProgressCard
 import com.prayerwheel.app.ui.components.WheelCustomizer
 import com.prayerwheel.app.ui.theme.RainbowBlue
 import com.prayerwheel.app.ui.theme.RainbowGreen
@@ -195,10 +200,20 @@ fun WheelScreen(
     val viewMode by viewModel.viewMode.collectAsState()
     val numberFormatStyle by viewModel.numberFormatStyle.collectAsState()
     val starParticles by viewModel.starParticles.collectAsState()
+    val newlyUnlockedAchievement by viewModel.newlyUnlockedAchievement.collectAsState()
+    val unlockedAchievements by viewModel.unlockedAchievements.collectAsState()
     val savedWheels by viewModel.savedWheels.collectAsState()
     val autoSpinEnabled by viewModel.autoSpinEnabled.collectAsState()
     val twoHandedEnabled by viewModel.twoHandedEnabled.collectAsState()
     val isPaused by viewModel.isPaused.collectAsState()
+    val todayMorningCompleted by viewModel.todayMorningCompleted.collectAsState()
+    val todayEveningCompleted by viewModel.todayEveningCompleted.collectAsState()
+    val todayMantraCount by viewModel.todayMantraCount.collectAsState()
+    val todayPracticeSeconds by viewModel.todayPracticeSeconds.collectAsState()
+    val dailyMantraGoal by viewModel.dailyMantraGoal.collectAsState()
+    val dailyMantraProgress by viewModel.dailyMantraProgress.collectAsState()
+    val dailyTimeGoalSeconds by viewModel.dailyTimeGoalSeconds.collectAsState()
+    val dailyTimeProgress by viewModel.dailyTimeProgress.collectAsState()
 
     // Star particle spawn counter
     var starSpawnTimer by remember { mutableFloatStateOf(0f) }
@@ -212,12 +227,46 @@ fun WheelScreen(
     var showCustomizer by remember { mutableStateOf(false) }
     var showSavedWheelsManager by remember { mutableStateOf(false) }
 
+    // T17: resume-after-kill — populated once on launch by detectResumableSession().
+    var resumableSession by remember { mutableStateOf<Session?>(null) }
+
     // Milestone glow animation state
     var milestoneGlowAlpha by remember { mutableStateOf(0f) }
     var lastMilestoneReached by remember { mutableStateOf<BigInteger?>(null) }
 
     // Background gradient drift
     val backgroundWarmth = (sessionDuration / 600000f).coerceIn(0f, 1f) // Max warmth after 10 minutes
+
+    // Background gradient colors based on mantra
+    val targetColors = remember(currentMantra.id, backgroundWarmth) {
+        val warmth = backgroundWarmth
+        when (currentMantra.id) {
+            "om_mani_padme_hum" -> listOf(
+                Color(0xFFFFF0F5).copy(alpha = 1f - warmth * 0.3f), // subtle rose
+                Color(0xFFFFF5F8).copy(alpha = 1f - warmth * 0.2f),
+                Color(0xFFFBE5EE).copy(alpha = 1f - warmth * 0.1f)
+            )
+            "vajra_guru" -> listOf(
+                Color(0xFFF5F0E8).copy(alpha = 1f - warmth * 0.3f), // subtle gold
+                Color(0xFFFFF8E7).copy(alpha = 1f - warmth * 0.2f),
+                Color(0xFFFBF0D8).copy(alpha = 1f - warmth * 0.1f)
+            )
+            "arapacana" -> listOf(
+                Color(0xFFE8F0F5).copy(alpha = 1f - warmth * 0.3f), // subtle cool blue
+                Color(0xFFE7F8FF).copy(alpha = 1f - warmth * 0.2f),
+                Color(0xFFD8F0FB).copy(alpha = 1f - warmth * 0.1f)
+            )
+            else -> listOf(
+                Color(0xFFF5F0E8).copy(alpha = 1f - warmth * 0.3f),
+                Color(0xFFFFF8E7).copy(alpha = 1f - warmth * 0.2f),
+                Color(0xFFFBF0D8).copy(alpha = 1f - warmth * 0.1f)
+            )
+        }
+    }
+
+    val color1 by animateColorAsState(targetColors[0], label = "color1")
+    val color2 by animateColorAsState(targetColors[1], label = "color2")
+    val color3 by animateColorAsState(targetColors[2], label = "color3")
 
     Box(modifier = modifier.fillMaxSize()) {
         // Animated background gradient
@@ -237,11 +286,7 @@ fun WheelScreen(
                 .fillMaxSize()
                 .background(
                     brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color(0xFFF5F0E8).copy(alpha = 1f - backgroundWarmth * 0.3f),
-                            Color(0xFFFFF8E7).copy(alpha = 1f - backgroundWarmth * 0.2f),
-                            Color(0xFFFBF0D8).copy(alpha = 1f - backgroundWarmth * 0.1f)
-                        ),
+                        colors = listOf(color1, color2, color3),
                         start = Offset(0f, gradientOffset * 500f),
                         end = Offset(1000f, 1000f + gradientOffset * 500f)
                     )
@@ -258,37 +303,55 @@ fun WheelScreen(
                         )
                     },
                     actions = {
-                        IconButton(onClick = onNavigateToCalculator) {
+                        IconButton(
+                            onClick = onNavigateToCalculator,
+                            modifier = Modifier.bounceClick()
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.DateRange,
                                 contentDescription = "Calculator"
                             )
                         }
-                        IconButton(onClick = { showCustomizer = true }) {
+                        IconButton(
+                            onClick = { showCustomizer = true },
+                            modifier = Modifier.bounceClick()
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Favorite,
                                 contentDescription = "Customize"
                             )
                         }
-                        IconButton(onClick = { showShareDialog = true }) {
+                        IconButton(
+                            onClick = { showShareDialog = true },
+                            modifier = Modifier.bounceClick()
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Share,
                                 contentDescription = "Share"
                             )
                         }
-                        IconButton(onClick = onNavigateToStats) {
+                        IconButton(
+                            onClick = onNavigateToStats,
+                            modifier = Modifier.bounceClick()
+                        ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.List,
                                 contentDescription = "Statistics"
                             )
                         }
-                        IconButton(onClick = onNavigateToSettings) {
+                        IconButton(
+                            onClick = onNavigateToSettings,
+                            modifier = Modifier.bounceClick()
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
                                 contentDescription = "Settings"
                             )
                         }
-                        IconButton(onClick = onNavigateToHistory) {
+                        IconButton(
+                            onClick = onNavigateToHistory,
+                            modifier = Modifier.bounceClick()
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.DateRange,
                                 contentDescription = "History"
@@ -371,6 +434,13 @@ else {
                             milestoneGlowAlpha = milestoneGlowAlpha,
                             wheelSkin = selectedSkin,
                             sendLightActive = sendLightActive,
+                            starParticles = starParticles,
+                            sessionTimeGoalSeconds = sessionTimeGoalSeconds,
+                            hasActiveSession = hasActiveSession,
+                            sessionDuration = sessionDuration,
+                            onUpdateCanvasDimensions = { width, height ->
+                                viewModel.updateCanvasDimensions(width, height)
+                            },
                             onDragStart = { viewModel.onDragStart() },
                             onDragMove = { x, y, centerX, centerY, timestamp ->
                                 viewModel.onDragMove(x, y, centerX, centerY, timestamp)
@@ -516,6 +586,11 @@ else {
                     }
                 }
 
+                // T17: probe for an interrupted session once on launch
+                LaunchedEffect(Unit) {
+                    resumableSession = viewModel.detectResumableSession()
+                }
+
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Saved wheels quick select cards (shown if there are saved wheels)
@@ -528,6 +603,56 @@ else {
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                // T17: resume-after-kill banner (dismissable; mirrors paused-banner style)
+                resumableSession?.let { session ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f)
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "↻",
+                                    style = MaterialTheme.typography.headlineSmall
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Resume your previous session?",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                                    )
+                                    Text(
+                                        text = "${session.rotationCount} rotations • tap Resume to continue, or Discard to keep it as recorded.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(onClick = { resumableSession = null }) {
+                                    Text("Discard")
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(onClick = {
+                                    viewModel.resumeFromSession(session)
+                                    resumableSession = null
+                                }) {
+                                    Text("Resume")
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
 
                 // Paused banner
@@ -576,7 +701,7 @@ else {
                             onClick = {
                                 if (isPaused) viewModel.resumeWheel() else viewModel.pauseWheel()
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).bounceClick(),
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Text(if (isPaused) "Resume" else "Pause")
@@ -585,7 +710,7 @@ else {
                         // End session button
                         OutlinedButton(
                             onClick = { viewModel.endSession() },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).bounceClick(),
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("End Session")
@@ -594,6 +719,24 @@ else {
 
                     Spacer(modifier = Modifier.height(16.dp))
                 }
+
+                // Today's progress — quiet morning/evening markers + today's accumulation.
+                TodayProgressCard(
+                    morningCompleted = todayMorningCompleted,
+                    eveningCompleted = todayEveningCompleted,
+                    todayMantraCount = todayMantraCount,
+                    todayPracticeSeconds = todayPracticeSeconds,
+                    currentIntention = currentIntention,
+                    numberFormatStyle = numberFormatStyle,
+                    dailyMantraGoal = dailyMantraGoal,
+                    dailyMantraProgress = dailyMantraProgress,
+                    dailyTimeGoalSeconds = dailyTimeGoalSeconds,
+                    dailyTimeProgress = dailyTimeProgress,
+                    onGoalReached = { viewModel.triggerMilestoneHaptic() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Mantra selector
                 MantraSelector(
@@ -630,7 +773,8 @@ else {
                     Spacer(modifier = Modifier.height(8.dp))
                     TimeGoalProgressDisplay(
                         currentSeconds = sessionDuration / 1000,
-                        goalSeconds = sessionTimeGoalSeconds
+                        goalSeconds = sessionTimeGoalSeconds,
+                        currentIntention = currentIntention
                     )
                 }
 
@@ -638,7 +782,7 @@ else {
                     // Intention button when no session is active and no goals set
                     OutlinedButton(
                         onClick = { showIntentionDialog = true },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().bounceClick(),
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("Set Intention")
@@ -715,6 +859,14 @@ else {
             )
         }
 
+        // Milestone celebration dialog
+        newlyUnlockedAchievement?.let { achievement ->
+            MilestoneCelebration(
+                achievement = achievement,
+                onDismiss = { viewModel.dismissAchievementCelebration() }
+            )
+        }
+
         // Intention dialog overlay
         if (showIntentionDialog) {
             IntentionDialog(
@@ -746,6 +898,7 @@ else {
         if (showCustomizer) {
             WheelCustomizer(
                 selectedSkinId = selectedSkin.id,
+                unlockedAchievements = unlockedAchievements,
                 onSkinSelected = { skin -> viewModel.setSelectedSkin(skin) },
                 onDismiss = { showCustomizer = false }
             )
@@ -834,12 +987,13 @@ private fun formatNumber(number: Long, style: com.prayerwheel.app.data.datastore
 }
 
 /**
- * Displays time goal progress when a time goal is set.
+ * Displays time goal progress when a time goal is set with an Intention Mandala.
  */
 @Composable
 private fun TimeGoalProgressDisplay(
     currentSeconds: Long,
-    goalSeconds: Long
+    goalSeconds: Long,
+    currentIntention: String
 ) {
     val progress = (currentSeconds.toFloat() / goalSeconds.toFloat()).coerceIn(0f, 1f)
     val isGoalReached = currentSeconds >= goalSeconds
@@ -847,11 +1001,75 @@ private fun TimeGoalProgressDisplay(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp)
+            .padding(horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Intention Mandala
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(160.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.size(140.dp)) {
+                val center = Offset(size.width / 2f, size.height / 2f)
+                val maxRadius = size.width / 2f
+                
+                // Draw base mandala petals (faint)
+                for (i in 0 until 12) {
+                    rotate(degrees = i * 30f) {
+                        drawPath(
+                            path = createPetalPath(center, maxRadius),
+                            color = Color.LightGray.copy(alpha = 0.3f),
+                            style = Fill
+                        )
+                    }
+                }
+                
+                // Draw filled mandala petals based on progress
+                val filledPetals = (progress * 12).toInt()
+                val partialProgress = (progress * 12) % 1
+                
+                for (i in 0..filledPetals) {
+                    if (i == 12) break
+                    val petalAlpha = if (i == filledPetals) partialProgress else 1f
+                    rotate(degrees = i * 30f) {
+                        drawPath(
+                            path = createPetalPath(center, maxRadius),
+                            color = Color(0xFFFFB74D).copy(alpha = petalAlpha * 0.8f),
+                            style = Fill
+                        )
+                    }
+                }
+                
+                // Inner circle
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.9f),
+                    radius = maxRadius * 0.4f,
+                    center = center
+                )
+            }
+            
+            // Intention text in center
+            if (currentIntention.isNotBlank()) {
+                Text(
+                    text = currentIntention,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.width(80.dp)
+                )
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
             val currentMins = currentSeconds / 60
@@ -866,33 +1084,21 @@ private fun TimeGoalProgressDisplay(
                 }
             )
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // Progress bar
-        androidx.compose.foundation.layout.Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .background(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(2.dp)
-                )
-        ) {
-            androidx.compose.foundation.layout.Box(
-                modifier = Modifier
-                    .fillMaxWidth(progress)
-                    .fillMaxHeight()
-                    .background(
-                        color = if (isGoalReached) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
-                        },
-                        shape = RoundedCornerShape(2.dp)
-                    )
-            )
-        }
+private fun createPetalPath(center: Offset, maxRadius: Float): Path {
+    return Path().apply {
+        moveTo(center.x, center.y)
+        quadraticBezierTo(
+            center.x + maxRadius * 0.3f, center.y - maxRadius * 0.5f,
+            center.x, center.y - maxRadius
+        )
+        quadraticBezierTo(
+            center.x - maxRadius * 0.3f, center.y - maxRadius * 0.5f,
+            center.x, center.y
+        )
+        close()
     }
 }
 
@@ -985,6 +1191,11 @@ private fun SideViewPrayerWheel(
     milestoneGlowAlpha: Float,
     wheelSkin: WheelSkin,
     sendLightActive: Boolean,
+    starParticles: List<com.prayerwheel.app.viewmodel.WheelViewModel.StarParticle>,
+    sessionTimeGoalSeconds: Long,
+    hasActiveSession: Boolean,
+    sessionDuration: Long,
+    onUpdateCanvasDimensions: (Float, Float) -> Unit,
     onDragStart: () -> Unit,
     onDragMove: (Float, Float, Float, Float, Long) -> Unit,
     onDragEnd: () -> Unit,
@@ -1010,52 +1221,46 @@ private fun SideViewPrayerWheel(
                 )
             }
             .pointerInput(Unit) {
+                // Pointer counting only — NOT drag tracking. detectDragGestures below handles drag.
                 awaitPointerEventScope {
-                    var isDragging = false
                     var lastPointerCount = 0
                     while (true) {
                         val event = awaitPointerEvent()
                         val currentPointerCount = event.changes.count { it.pressed }
-
                         if (currentPointerCount != lastPointerCount) {
                             lastPointerCount = currentPointerCount
                             onPointerCountChange(currentPointerCount)
                         }
-
-                        if (!isDragging && currentPointerCount > 0) {
-                            onDragStart()
-                            isDragging = true
-                        }
-
-                        if (isDragging) {
-                            if (currentPointerCount > 0) {
-                                val change = event.changes.firstOrNull { it.pressed }
-                                if (change != null) {
-                                    val currentCenterX = size.width / 2f
-                                    val currentCenterY = size.height / 2f
-                                    onDragMove(
-                                        change.position.x,
-                                        change.position.y,
-                                        currentCenterX,
-                                        currentCenterY,
-                                        System.currentTimeMillis()
-                                    )
-                                    // Consume the event to prevent parent scrolling
-                                    event.changes.forEach { it.consume() }
-                                }
-                            } else {
-                                onDragEnd()
-                                isDragging = false
-                            }
-                        }
                     }
                 }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
+                    onDrag = { change, _ ->
+                        val currentCenterX = size.width / 2f
+                        val currentCenterY = size.height / 2f
+                        onDragMove(
+                            change.position.x,
+                            change.position.y,
+                            currentCenterX,
+                            currentCenterY,
+                            System.currentTimeMillis()
+                        )
+                        change.consume()
+                    }
+                )
             }
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val canvasWidth = size.width
             val canvasHeight = size.height
             val centerX = canvasWidth / 2f
+            
+            // Update canvas dimensions in ViewModel for particle physics
+            onUpdateCanvasDimensions(canvasWidth, canvasHeight)
 
             // Dimensions
             val cylinderWidth = canvasWidth * 0.55f
@@ -1108,9 +1313,42 @@ private fun SideViewPrayerWheel(
             // 8. Draw crystal/gem finial
             drawCrystal(centerX, cylinderTop - capHeight * 0.8f, crystalSway, glowIntensity, wheelSkin)
 
-            // 9. Milestone glow effect
+            // 9. Milestone time-goal progress ring
+            if (sessionTimeGoalSeconds > 0 && hasActiveSession) {
+                val progress = ((sessionDuration / 1000f) / sessionTimeGoalSeconds).coerceIn(0f, 1f)
+                val ringRadius = minOf(canvasWidth, canvasHeight) * 0.38f
+                val startAngle = -90f
+                val sweepAngle = progress * 360f
+
+                drawArc(
+                    color = Color(wheelSkin.rayColor).copy(alpha = 0.15f),
+                    startAngle = 0f,
+                    sweepAngle = 360f,
+                    useCenter = false,
+                    topLeft = Offset(centerX - ringRadius, cylinderTop + cylinderHeight / 2f - ringRadius),
+                    size = Size(ringRadius * 2f, ringRadius * 2f),
+                    style = Stroke(width = 3.dp.toPx())
+                )
+
+                drawArc(
+                    color = Color(wheelSkin.rayColor).copy(alpha = 0.65f),
+                    startAngle = startAngle,
+                    sweepAngle = sweepAngle,
+                    useCenter = false,
+                    topLeft = Offset(centerX - ringRadius, cylinderTop + cylinderHeight / 2f - ringRadius),
+                    size = Size(ringRadius * 2f, ringRadius * 2f),
+                    style = Stroke(width = 3.dp.toPx())
+                )
+            }
+
+            // 10. Milestone glow effect
             if (milestoneGlowAlpha > 0f) {
                 drawMilestoneGlow(centerX, cylinderTop + cylinderHeight / 2f, cylinderWidth * 1.5f, milestoneGlowAlpha)
+            }
+
+            // 11. Draw particles
+            if (starParticles.isNotEmpty()) {
+                drawStarParticles(starParticles, canvasWidth, canvasHeight)
             }
         }
     }
@@ -2147,45 +2385,37 @@ private fun TopDownViewPrayerWheel(
                 detectTapGestures(onLongPress = { onLongPress() })
             }
             .pointerInput(Unit) {
+                // Pointer counting only — NOT drag tracking. detectDragGestures below handles drag.
                 awaitPointerEventScope {
-                    var isDragging = false
                     var lastPointerCount = 0
                     while (true) {
                         val event = awaitPointerEvent()
                         val currentPointerCount = event.changes.count { it.pressed }
-
                         if (currentPointerCount != lastPointerCount) {
                             lastPointerCount = currentPointerCount
                             onPointerCountChange(currentPointerCount)
                         }
-
-                        if (!isDragging && currentPointerCount > 0) {
-                            onDragStart()
-                            isDragging = true
-                        }
-
-                        if (isDragging) {
-                            if (currentPointerCount > 0) {
-                                val change = event.changes.firstOrNull { it.pressed }
-                                if (change != null) {
-                                    val currentCenterX = size.width / 2f
-                                    val currentCenterY = size.height / 2f
-                                    onDragMove(
-                                        change.position.x,
-                                        change.position.y,
-                                        currentCenterX,
-                                        currentCenterY,
-                                        System.currentTimeMillis()
-                                    )
-                                    event.changes.forEach { it.consume() }
-                                }
-                            } else {
-                                onDragEnd()
-                                isDragging = false
-                            }
-                        }
                     }
                 }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
+                    onDrag = { change, _ ->
+                        val currentCenterX = size.width / 2f
+                        val currentCenterY = size.height / 2f
+                        onDragMove(
+                            change.position.x,
+                            change.position.y,
+                            currentCenterX,
+                            currentCenterY,
+                            System.currentTimeMillis()
+                        )
+                        change.consume()
+                    }
+                )
             }
     ) {
         // Rotating content: circle + text
@@ -2391,45 +2621,37 @@ private fun AbstractViewPrayerWheel(
                 detectTapGestures(onLongPress = { onLongPress() })
             }
             .pointerInput(Unit) {
+                // Pointer counting only — NOT drag tracking. detectDragGestures below handles drag.
                 awaitPointerEventScope {
-                    var isDragging = false
                     var lastPointerCount = 0
                     while (true) {
                         val event = awaitPointerEvent()
                         val currentPointerCount = event.changes.count { it.pressed }
-
                         if (currentPointerCount != lastPointerCount) {
                             lastPointerCount = currentPointerCount
                             onPointerCountChange(currentPointerCount)
                         }
-
-                        if (!isDragging && currentPointerCount > 0) {
-                            onDragStart()
-                            isDragging = true
-                        }
-
-                        if (isDragging) {
-                            if (currentPointerCount > 0) {
-                                val change = event.changes.firstOrNull { it.pressed }
-                                if (change != null) {
-                                    val currentCenterX = size.width / 2f
-                                    val currentCenterY = size.height / 2f
-                                    onDragMove(
-                                        change.position.x,
-                                        change.position.y,
-                                        currentCenterX,
-                                        currentCenterY,
-                                        System.currentTimeMillis()
-                                    )
-                                    event.changes.forEach { it.consume() }
-                                }
-                            } else {
-                                onDragEnd()
-                                isDragging = false
-                            }
-                        }
                     }
                 }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
+                    onDrag = { change, _ ->
+                        val currentCenterX = size.width / 2f
+                        val currentCenterY = size.height / 2f
+                        onDragMove(
+                            change.position.x,
+                            change.position.y,
+                            currentCenterX,
+                            currentCenterY,
+                            System.currentTimeMillis()
+                        )
+                        change.consume()
+                    }
+                )
             }
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -2763,44 +2985,37 @@ private fun DualWheelsView(
                 detectTapGestures(onLongPress = { onLongPress() })
             }
             .pointerInput(Unit) {
+                // Pointer counting only — NOT drag tracking. detectDragGestures below handles drag.
                 awaitPointerEventScope {
-                    var isDragging = false
                     var lastPointerCount = 0
                     while (true) {
                         val event = awaitPointerEvent()
                         val currentPointerCount = event.changes.count { it.pressed }
-
                         if (currentPointerCount != lastPointerCount) {
                             lastPointerCount = currentPointerCount
                             onPointerCountChange(currentPointerCount)
                         }
-
-                        if (!isDragging && currentPointerCount > 0) {
-                            onDragStart()
-                            isDragging = true
-                        }
-
-                        if (isDragging) {
-                            if (currentPointerCount > 0) {
-                                val currentCenterX = size.width / 2f
-                                val currentCenterY = size.height / 2f
-                                event.changes.filter { it.pressed }.forEach { change ->
-                                    onDragMove(
-                                        change.position.x,
-                                        change.position.y,
-                                        currentCenterX,
-                                        currentCenterY,
-                                        System.currentTimeMillis()
-                                    )
-                                    change.consume()
-                                }
-                            } else {
-                                onDragEnd()
-                                isDragging = false
-                            }
-                        }
                     }
                 }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
+                    onDrag = { change, _ ->
+                        val currentCenterX = size.width / 2f
+                        val currentCenterY = size.height / 2f
+                        onDragMove(
+                            change.position.x,
+                            change.position.y,
+                            currentCenterX,
+                            currentCenterY,
+                            System.currentTimeMillis()
+                        )
+                        change.consume()
+                    }
+                )
             }
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -3003,45 +3218,37 @@ private fun TableTopViewPrayerWheel(
         modifier = modifier
             .pointerInput(Unit) { detectTapGestures(onLongPress = { onLongPress() }) }
             .pointerInput(Unit) {
+                // Pointer counting only — NOT drag tracking. detectDragGestures below handles drag.
                 awaitPointerEventScope {
-                    var isDragging = false
                     var lastPointerCount = 0
                     while (true) {
                         val event = awaitPointerEvent()
                         val currentPointerCount = event.changes.count { it.pressed }
-
                         if (currentPointerCount != lastPointerCount) {
                             lastPointerCount = currentPointerCount
                             onPointerCountChange(currentPointerCount)
                         }
-
-                        if (!isDragging && currentPointerCount > 0) {
-                            onDragStart()
-                            isDragging = true
-                        }
-
-                        if (isDragging) {
-                            if (currentPointerCount > 0) {
-                                val change = event.changes.firstOrNull { it.pressed }
-                                if (change != null) {
-                                    val currentCenterX = size.width / 2f
-                                    val currentCenterY = size.height / 2f
-                                    onDragMove(
-                                        change.position.x,
-                                        change.position.y,
-                                        currentCenterX,
-                                        currentCenterY,
-                                        System.currentTimeMillis()
-                                    )
-                                    event.changes.forEach { it.consume() }
-                                }
-                            } else {
-                                onDragEnd()
-                                isDragging = false
-                            }
-                        }
                     }
                 }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
+                    onDrag = { change, _ ->
+                        val currentCenterX = size.width / 2f
+                        val currentCenterY = size.height / 2f
+                        onDragMove(
+                            change.position.x,
+                            change.position.y,
+                            currentCenterX,
+                            currentCenterY,
+                            System.currentTimeMillis()
+                        )
+                        change.consume()
+                    }
+                )
             }
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -3120,45 +3327,37 @@ private fun GlobeViewPrayerWheel(
         modifier = modifier
             .pointerInput(Unit) { detectTapGestures(onLongPress = { onLongPress() }) }
             .pointerInput(Unit) {
+                // Pointer counting only — NOT drag tracking. detectDragGestures below handles drag.
                 awaitPointerEventScope {
-                    var isDragging = false
                     var lastPointerCount = 0
                     while (true) {
                         val event = awaitPointerEvent()
                         val currentPointerCount = event.changes.count { it.pressed }
-
                         if (currentPointerCount != lastPointerCount) {
                             lastPointerCount = currentPointerCount
                             onPointerCountChange(currentPointerCount)
                         }
-
-                        if (!isDragging && currentPointerCount > 0) {
-                            onDragStart()
-                            isDragging = true
-                        }
-
-                        if (isDragging) {
-                            if (currentPointerCount > 0) {
-                                val change = event.changes.firstOrNull { it.pressed }
-                                if (change != null) {
-                                    val currentCenterX = size.width / 2f
-                                    val currentCenterY = size.height / 2f
-                                    onDragMove(
-                                        change.position.x,
-                                        change.position.y,
-                                        currentCenterX,
-                                        currentCenterY,
-                                        System.currentTimeMillis()
-                                    )
-                                    event.changes.forEach { it.consume() }
-                                }
-                            } else {
-                                onDragEnd()
-                                isDragging = false
-                            }
-                        }
                     }
                 }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
+                    onDrag = { change, _ ->
+                        val currentCenterX = size.width / 2f
+                        val currentCenterY = size.height / 2f
+                        onDragMove(
+                            change.position.x,
+                            change.position.y,
+                            currentCenterX,
+                            currentCenterY,
+                            System.currentTimeMillis()
+                        )
+                        change.consume()
+                    }
+                )
             }
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {

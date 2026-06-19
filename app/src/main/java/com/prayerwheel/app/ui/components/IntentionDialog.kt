@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -31,6 +32,22 @@ import androidx.compose.ui.unit.dp
  * Preset goal values for mantra sessions.
  */
 private val GOAL_PRESETS = listOf(108L, 1000L, 10000L, 100000L)
+
+/**
+ * Contemplative traditional intentions to inspire practice.
+ */
+internal val INTENTION_SUGGESTIONS = listOf(
+    "May all sentient beings be free from suffering and the causes of suffering.",
+    "For the health, peace, and long life of all family members and friends.",
+    "May my heart blossom with compassion, patience, and wisdom.",
+    "To cultivate mindfulness, quietness of mind, and inner stillness.",
+    "For the swift relief of those suffering from illness, poverty, or conflict.",
+    "May I remain steady, present, and kind throughout the day.",
+    "For the healing of the Earth and all living ecosystems.",
+    "To overcome anger, attachment, and ignorance in my daily life.",
+    "May the positive merit of this practice radiate to benefit all beings.",
+    "For the guidance and strength to act with absolute compassion."
+)
 
 /**
  * Dialog for setting an intention and optional mantra goals.
@@ -64,16 +81,27 @@ fun IntentionDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Intention text field
-                OutlinedTextField(
-                    value = intentionText,
-                    onValueChange = { intentionText = it },
-                    label = { Text("Intention") },
-                    placeholder = { Text("e.g., For the health of my family") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2,
-                    maxLines = 4
-                )
+                // Intention text field with Inspire button
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = intentionText,
+                        onValueChange = { intentionText = it },
+                        label = { Text("Intention") },
+                        placeholder = { Text("e.g., For the health of my family") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        maxLines = 4
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    TextButton(
+                        onClick = {
+                            intentionText = INTENTION_SUGGESTIONS.random()
+                        },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text("Inspire Me ✨")
+                    }
+                }
 
                 // Session goal section
                 Text(

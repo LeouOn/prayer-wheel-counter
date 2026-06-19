@@ -26,21 +26,36 @@ import com.prayerwheel.app.data.model.SavedWheel
 import com.prayerwheel.app.data.model.WheelSkin
 import com.prayerwheel.app.data.model.WheelSkins
 import com.prayerwheel.app.data.model.Session
+import com.prayerwheel.app.data.model.Achievement
+import com.prayerwheel.app.data.model.Achievements
 import com.prayerwheel.app.notification.SessionNotificationService
 import com.prayerwheel.app.notification.SessionNotificationReceiver
-import kotlinx.coroutines.Dispatchers
+import com.prayerwheel.app.widget.PrayerWheelWidget
+import com.prayerwheel.app.work.SessionSaveWorker
+import androidx.glance.appwidget.updateAll
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.math.BigInteger
+import java.util.Calendar
+import java.util.TimeZone
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.sin
 
 /**
  * ViewModel for the prayer wheel screen.
@@ -65,9 +80,21 @@ class WheelViewModel(
         private const val SESSION_STOP_DELAY_MS = 30000L
         private const val SESSION_NEW_THRESHOLD_MS = 300000L // 5 minutes
         private const val ANIMATION_FRAME_TIME_MS = 16L
+        private const val WIDGET_UPDATE_THROTTLE_MS = 1000L
         private const val FLICK_VELOCITY_MULTIPLIER = 1.5f
         private const val MAX_ANGULAR_VELOCITY = 75f
         private const val COUNTER_CLOCKWISE_REMINDER_DELAY_MS = 3000L
+        private const val MIN_COUNTER_CLOCKWISE_VELOCITY = 3.0f // rad/s — below this, accidental flicks are ignored
+        private const val COUNTER_CLOCKWISE_COOLDOWN_MS = 300_000L // 5 min between reminders
+
+        // Static friction: wheel halts cleanly below this angular velocity (rad/s) when no torque is applied.
+        private const val STATIC_FRICTION_THRESHOLD = 0.05f
+        // Weight→wheel coupling: restoring torque coefficient from sin(weightAngle); acts as extra friction at low speed.
+        private const val WEIGHT_COUPLING_COEFFICIENT = 0.03f
+        // Auto-spin ramp: max rad/s change per frame at the 60fps baseline (~0.5-1.5s ramp to a typical target RPM).
+        private const val AUTO_SPIN_MAX_ACCEL_PER_FRAME = 0.1f
+        // Wheel-mass scaling default. Drag angular change is divided by wheelMass so heavier wheels resist acceleration.
+        private const val WHEEL_MASS_DEFAULT = 1.0f
 
         // Haptic feedback durations in milliseconds
         private const val HAPTIC_TICK_DURATION = 5L
@@ -112,6 +139,12 @@ class WheelViewModel(
      */
     private val _baseFriction = MutableStateFlow(FRICTION_COEFFICIENT)
     val baseFriction: StateFlow<Float> = _baseFriction.asStateFlow()
+
+    /**
+     * Wheel mass for drag scaling (α = F / (m·r)); heavier wheels accelerate less per identical drag.
+     */
+    private val _wheelMass = MutableStateFlow(1.0f)
+    val wheelMass: StateFlow<Float> = _wheelMass.asStateFlow()
 
     /**
      * Current mantras per rotation setting.
@@ -241,10 +274,22 @@ class WheelViewModel(
     val dailyMantraGoal: StateFlow<Long> = _dailyMantraGoal.asStateFlow()
 
     /**
+     * Daily time goal in seconds.
+     */
+    private val _dailyTimeGoalSeconds = MutableStateFlow(0L)
+    val dailyTimeGoalSeconds: StateFlow<Long> = _dailyTimeGoalSeconds.asStateFlow()
+
+    /**
      * Currently selected wheel skin.
      */
     private val _selectedSkin = MutableStateFlow(WheelSkins.default())
     val selectedSkin: StateFlow<WheelSkin> = _selectedSkin.asStateFlow()
+
+    /**
+     * Currently active wheel ID (from saved wheels). null if manually configured.
+     */
+    private val _currentWheelId = MutableStateFlow<String?>(null)
+    val currentWheelId: StateFlow<String?> = _currentWheelId.asStateFlow()
 
     /**
      * Whether send light animation is active.
@@ -315,6 +360,49 @@ class WheelViewModel(
 
     private val _vibrationIntensity = MutableStateFlow(1.0f)
     val vibrationIntensity: StateFlow<Float> = _vibrationIntensity.asStateFlow()
+    
+    private val _unlockedAchievements = MutableStateFlow<Set<String>>(emptySet())
+    val unlockedAchievements: StateFlow<Set<String>> = _unlockedAchievements.asStateFlow()
+
+    private val _newlyUnlockedAchievement = MutableStateFlow<Achievement?>(null)
+    val newlyUnlockedAchievement: StateFlow<Achievement?> = _newlyUnlockedAchievement.asStateFlow()
+
+    // Today's Progress state (T8). Collected in init {} from SessionDao.observeSessionsForDay.
+    // Attribution rule: a session is "morning" if Calendar.HOUR_OF_DAY of its startedAt is
+    // strictly less than reminderEveningHour (default 19). Otherwise it is "evening".
+    // Sessions spanning the boundary are attributed by their startedAt hour, not their end.
+    private val _todayMorningCompleted = MutableStateFlow(false)
+    val todayMorningCompleted: StateFlow<Boolean> = _todayMorningCompleted.asStateFlow()
+
+    private val _todayEveningCompleted = MutableStateFlow(false)
+    val todayEveningCompleted: StateFlow<Boolean> = _todayEveningCompleted.asStateFlow()
+
+    private val _todayMantraCount = MutableStateFlow(BigInteger.ZERO)
+    val todayMantraCount: StateFlow<BigInteger> = _todayMantraCount.asStateFlow()
+
+    private val _todayPracticeSeconds = MutableStateFlow(0L)
+    val todayPracticeSeconds: StateFlow<Long> = _todayPracticeSeconds.asStateFlow()
+
+    /**
+     * Today's progress toward [dailyMantraGoal], clamped to 0f..1f. Yields 0f
+     * when no goal is set (goal <= 0) — callers must read [dailyMantraGoal]
+     * to distinguish "no goal" from "not yet started".
+     */
+    val dailyMantraProgress: StateFlow<Float> =
+        combine(_todayMantraCount, _dailyMantraGoal) { count, goal ->
+            if (goal <= 0L) 0f
+            else (count.toDouble() / goal.toDouble()).coerceIn(0.0, 1.0).toFloat()
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
+
+    /**
+     * Today's progress toward [dailyTimeGoalSeconds], clamped to 0f..1f.
+     * Yields 0f when no goal is set (goal <= 0).
+     */
+    val dailyTimeProgress: StateFlow<Float> =
+        combine(_todayPracticeSeconds, _dailyTimeGoalSeconds) { seconds, goal ->
+            if (goal <= 0L) 0f
+            else (seconds.toFloat() / goal.toFloat()).coerceIn(0f, 1f)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
 
     /**
      * Left wheel angular velocity (for dual wheel mode).
@@ -373,6 +461,15 @@ class WheelViewModel(
     private var autoSpinJob: Job? = null
     private var sessionTimerJob: Job? = null
 
+    private var canvasWidth = 0f
+    private var canvasHeight = 0f
+    private var nextParticleId = 0
+
+    fun updateCanvasDimensions(width: Float, height: Float) {
+        canvasWidth = width
+        canvasHeight = height
+    }
+
     // RPM tracking state
     private var rpmSamples = mutableListOf<Float>()
     private var rpmSampleCount = 0
@@ -386,6 +483,14 @@ class WheelViewModel(
     private var sessionId: Long? = null
     private var lastSessionEndTime: Long? = null
     private var pendingDedicationSession: PendingSession? = null
+    private var sessionMergeThresholdMs: Long = SESSION_NEW_THRESHOLD_MS
+
+    // T15: cached Flow values so the non-suspending session-start path can read them
+    // (same pattern as sessionMergeThresholdMs). pendingSessionLabel is consumed by
+    // createSessionFromPending / createSessionFromCurrentState.
+    private var pendingSessionLabel: String? = null
+    private var autoLabelSessionsEnabled: Boolean = true
+    private var cachedReminderEveningHour: Int = 19
 
     // Notification service active flag
     private var notificationActive = false
@@ -400,13 +505,29 @@ class WheelViewModel(
         val averageRpm: Float,
         val peakRpm: Float,
         val intention: String?,
-        val sessionGoal: Long?
+        val sessionGoal: Long?,
+        val wheelId: String?
     )
 
     init {
         viewModelScope.launch {
             userPreferences.mantrasPerRotation.collect { value ->
                 _mantrasPerRotation.value = value
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.sessionMergeThresholdMs.collect { value ->
+                sessionMergeThresholdMs = value
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.autoLabelSessions.collect { enabled ->
+                autoLabelSessionsEnabled = enabled
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.reminderEveningHour.collect { hour ->
+                cachedReminderEveningHour = hour
             }
         }
         viewModelScope.launch {
@@ -441,6 +562,11 @@ class WheelViewModel(
             }
         }
         viewModelScope.launch {
+            userPreferences.wheelMass.collect { mass ->
+                _wheelMass.value = mass
+            }
+        }
+        viewModelScope.launch {
             userPreferences.currentIntention.collect { intention ->
                 _currentIntention.value = intention
             }
@@ -458,6 +584,11 @@ class WheelViewModel(
         viewModelScope.launch {
             userPreferences.dailyMantraGoal.collect { goal ->
                 _dailyMantraGoal.value = goal
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.dailyTimeGoalSeconds.collect { goal ->
+                _dailyTimeGoalSeconds.value = goal
             }
         }
         viewModelScope.launch {
@@ -510,7 +641,83 @@ class WheelViewModel(
                 _vibrationIntensity.value = intensity
             }
         }
+        viewModelScope.launch {
+            userPreferences.unlockedAchievements.collect { achievements ->
+                _unlockedAchievements.value = achievements
+            }
+        }
+        observeTodayProgress()
         loadLifetimeStats()
+    }
+
+    /**
+     * Collects today's sessions via SessionDao.observeSessionsForDay and reduces them
+     * into the four TodayProgress state flows. Recomputed whenever sessions change OR
+     * when the local calendar day rolls over (polled every 60s) OR when the user
+     * changes reminderEveningHour (since that drives morning/evening attribution).
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun observeTodayProgress() {
+        viewModelScope.launch {
+            val dayWindow = flow {
+                while (isActive) {
+                    emit(currentDayWindow())
+                    val now = System.currentTimeMillis()
+                    val tomorrow = startOfNextDay(now)
+                    delay((tomorrow - now + 1000L).coerceAtLeast(60_000L))
+                }
+            }.distinctUntilChanged()
+
+            dayWindow.combine(userPreferences.reminderEveningHour) { window, eveningHour ->
+                window to eveningHour
+            }.distinctUntilChanged().flatMapLatest { (window, eveningHour) ->
+                sessionDao.observeSessionsForDay(window.first, window.second)
+                    .map { sessions -> sessions to eveningHour }
+            }.collect { (sessions, eveningHour) ->
+                var morning = false
+                var evening = false
+                var mantras = BigInteger.ZERO
+                var practiceMs = 0L
+                val calendar = Calendar.getInstance(TimeZone.getDefault())
+                for (session in sessions) {
+                    calendar.timeInMillis = session.startedAt
+                    val hour = calendar.get(Calendar.HOUR_OF_DAY)
+                    if (hour < eveningHour) morning = true else evening = true
+                    mantras = mantras.add(session.totalMantras)
+                    val endMs = session.endedAt ?: session.startedAt
+                    if (endMs >= session.startedAt) {
+                        practiceMs += (endMs - session.startedAt)
+                    }
+                }
+                _todayMorningCompleted.value = morning
+                _todayEveningCompleted.value = evening
+                _todayMantraCount.value = mantras
+                _todayPracticeSeconds.value = practiceMs / 1000L
+            }
+        }
+    }
+
+    private fun startOfNextDay(epochMillis: Long): Long {
+        val calendar = Calendar.getInstance(TimeZone.getDefault())
+        calendar.timeInMillis = epochMillis
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        calendar.add(Calendar.DAY_OF_MONTH, 1)
+        return calendar.timeInMillis
+    }
+
+    private fun currentDayWindow(): Pair<Long, Long> {
+        val calendar = Calendar.getInstance(TimeZone.getDefault())
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        val startOfDay = calendar.timeInMillis
+        calendar.add(Calendar.DAY_OF_MONTH, 1)
+        val startOfNextDay = calendar.timeInMillis
+        return startOfDay to startOfNextDay
     }
 
     /**
@@ -587,18 +794,13 @@ class WheelViewModel(
         if (_spinMode.value != SpinMode.AUTO_SPIN) return
 
         _autoSpinActive.value = true
-        val rpm = _autoSpinRpm.value
-        // Convert RPM to angular velocity (radians per second)
-        // RPM * 2π / 60 = rad/s
-        val targetOmega = rpm * 2 * PI.toFloat() / 60f
-        _angularVelocity.value = targetOmega
-
+        // Do not snap to target — the physics loop ramps up via torque-limited acceleration.
         startSessionIfNeeded()
         startPhysicsLoop()
     }
 
     /**
-     * Stops auto-spin mode.
+     * Stops auto-spin mode. The wheel coasts down via friction rather than snapping to a halt.
      */
     fun stopAutoSpin() {
         _autoSpinActive.value = false
@@ -609,7 +811,8 @@ class WheelViewModel(
      */
     fun onDragMove(x: Float, y: Float, centerX: Float, centerY: Float, timestamp: Long) {
         val angle = atan2(y - centerY, x - centerX)
-        val angularDiff = calculateAngularChange(angle)
+        // Wheel-mass scaling: heavier wheels rotate less per identical drag (α = F / (m·r)).
+        val angularDiff = calculateAngularChange(angle) / _wheelMass.value
 
         // Check if dual wheels mode is enabled
         if (_twoHandedEnabled.value) {
@@ -716,15 +919,13 @@ class WheelViewModel(
                 // Apply flick velocity multiplier for stronger spinning
                 velocity *= FLICK_VELOCITY_MULTIPLIER
 
-                // Check for counter-clockwise motion
-                if (velocity < 0) {
-                    // Counter-clockwise detected
+                // Check for counter-clockwise motion (only trigger for intentional CCW flicks)
+                if (velocity < -MIN_COUNTER_CLOCKWISE_VELOCITY) {
+                    // Significant counter-clockwise detected
                     if (!_counterClockwiseEnabled.value) {
-                        // Show reminder but allow the motion
+                        // Show gentle reminder but still allow the motion
                         showCounterClockwiseReminder()
                     }
-                    // Allow counter-clockwise with reduced velocity or block based on setting
-                    // For now, we let it spin counter-clockwise but at reduced sensitivity
                     velocity = velocity.coerceIn(-MAX_ANGULAR_VELOCITY, 0f)
                 } else {
                     // Clockwise - apply higher cap
@@ -744,7 +945,7 @@ class WheelViewModel(
      */
     private fun showCounterClockwiseReminder() {
         val now = System.currentTimeMillis()
-        if (now - lastCounterClockwiseReminderTime < 60_000L) return // 1 minute cooldown
+        if (now - lastCounterClockwiseReminderTime < COUNTER_CLOCKWISE_COOLDOWN_MS) return // 5 minute cooldown
 
         lastCounterClockwiseReminderTime = now
         _showCounterClockwiseReminder.value = true
@@ -821,6 +1022,7 @@ class WheelViewModel(
         viewModelScope.launch {
             _mantrasPerRotation.value = count
             userPreferences.setMantrasPerRotation(count)
+            _currentWheelId.value = null // Cleared because user manually modified settings
             updateSessionMantras()
         }
     }
@@ -831,6 +1033,7 @@ class WheelViewModel(
     fun setSelectedMantra(mantraId: String) {
         viewModelScope.launch {
             userPreferences.setSelectedMantra(mantraId)
+            _currentWheelId.value = null // Cleared because user manually modified settings
         }
     }
 
@@ -931,12 +1134,11 @@ class WheelViewModel(
             _autoSpinEnabled.value = enabled
             userPreferences.setAutoSpinEnabled(enabled)
             if (enabled) {
-                // Immediately start spinning at the set RPM
-                val targetOmega = _autoSpinRpm.value * 2 * PI.toFloat() / 60f
-                _angularVelocity.value = targetOmega
+                // The physics loop ramps the wheel up to the target RPM via torque-limited acceleration.
                 startSessionIfNeeded()
                 startPhysicsLoop()
             } else {
+                // Coast down via friction — do not snap velocity to 0.
                 stopAutoSpin()
             }
         }
@@ -996,7 +1198,134 @@ class WheelViewModel(
             userPreferences.setMantrasPerRotation(wheel.capacity)
             userPreferences.setSelectedMantra(wheel.mantraId)
             _currentMantra.value = Mantras.byId(wheel.mantraId) ?: Mantras.OM_MANI_PADME_HUM
+            _currentWheelId.value = wheel.id
         }
+    }
+
+    /**
+     * Logs a manual/retrospective prayer wheel practice session.
+     */
+    fun logManualSession(
+        wheelId: String?,
+        startedAt: Long,
+        durationSeconds: Long,
+        rotationCount: Long,
+        mantraId: String,
+        mantrasPerRotation: Long,
+        intention: String?,
+        dedication: String?
+    ) {
+        viewModelScope.launch {
+            val endedAt = startedAt + (durationSeconds * 1000)
+            val totalMantras = java.math.BigInteger.valueOf(rotationCount)
+                .multiply(java.math.BigInteger.valueOf(mantrasPerRotation))
+
+            val session = Session(
+                startedAt = startedAt,
+                endedAt = endedAt,
+                rotationCount = rotationCount,
+                mantrasPerRotation = mantrasPerRotation,
+                totalMantras = totalMantras,
+                mantraId = mantraId,
+                dedication = dedication,
+                mode = "MANUAL",
+                averageRpm = 0f,
+                peakRpm = 0f,
+                totalSpins = rotationCount,
+                intention = intention?.ifBlank { null },
+                sessionGoal = null,
+                wheelId = wheelId
+            )
+
+            sessionDao.insert(session)
+
+            // Update lifetime stats
+            val existing = lifetimeStatsDao.getStats()
+            val newStats = existing?.copy(
+                totalRotations = existing.totalRotations + session.rotationCount,
+                totalMantras = existing.totalMantras + session.totalMantras,
+                sessionsCompleted = existing.sessionsCompleted + 1,
+                totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + durationSeconds,
+                averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
+                    (existing.totalSpinningTimeSeconds + durationSeconds) / (existing.sessionsCompleted + 1)
+                } else durationSeconds
+            ) ?: LifetimeStats(
+                id = 1,
+                totalRotations = session.rotationCount,
+                totalMantras = session.totalMantras,
+                sessionsCompleted = 1,
+                firstSessionAt = session.startedAt,
+                totalSpinningTimeSeconds = durationSeconds,
+                averageSessionDurationSeconds = durationSeconds
+            )
+
+            lifetimeStatsDao.upsert(newStats)
+            checkAchievements(newStats.totalMantras)
+        }
+    }
+
+    /**
+     * Deletes a prayer wheel session and updates lifetime stats accordingly (without downgrading achievements).
+     */
+    fun deleteSession(session: Session) {
+        viewModelScope.launch {
+            sessionDao.deleteSessionById(session.id)
+            subtractSessionFromStats(session)
+        }
+    }
+
+    /**
+     * Updates only the editable label on a session (T15). Persists via SessionDao.update.
+     * Passing null clears the label ("None" in the UI). Lifetime stats are unaffected.
+     */
+    fun updateSessionLabel(session: Session, newLabel: String?) {
+        viewModelScope.launch {
+            sessionDao.update(session.copy(label = newLabel))
+        }
+    }
+
+    /**
+     * Restores a previously deleted session (undo). Re-inserts and re-adds to lifetime stats.
+     */
+    fun undoDeleteSession(session: Session) {        viewModelScope.launch {
+            sessionDao.insert(session)
+            val existing = lifetimeStatsDao.getStats()
+            val sessionDurationSeconds = ((session.endedAt ?: session.startedAt) - session.startedAt) / 1000
+            val newStats = existing?.copy(
+                totalRotations = existing.totalRotations + session.rotationCount,
+                totalMantras = existing.totalMantras + session.totalMantras,
+                sessionsCompleted = existing.sessionsCompleted + 1,
+                totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
+                averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
+                    (existing.totalSpinningTimeSeconds + sessionDurationSeconds) / (existing.sessionsCompleted + 1)
+                } else sessionDurationSeconds
+            ) ?: LifetimeStats(
+                id = 1,
+                totalRotations = session.rotationCount,
+                totalMantras = session.totalMantras,
+                sessionsCompleted = 1,
+                firstSessionAt = session.startedAt,
+                totalSpinningTimeSeconds = sessionDurationSeconds,
+                averageSessionDurationSeconds = sessionDurationSeconds
+            )
+            lifetimeStatsDao.upsert(newStats)
+        }
+    }
+
+    private suspend fun subtractSessionFromStats(session: Session) {
+        val existing = lifetimeStatsDao.getStats() ?: return
+        val sessionDuration = ((session.endedAt ?: session.startedAt) - session.startedAt) / 1000
+        val newCount = (existing.sessionsCompleted - 1).coerceAtLeast(0)
+        val newStats = existing.copy(
+            totalRotations = (existing.totalRotations - session.rotationCount).coerceAtLeast(0),
+            totalMantras = (existing.totalMantras - session.totalMantras).coerceAtLeast(java.math.BigInteger.ZERO),
+            sessionsCompleted = newCount,
+            totalSpinningTimeSeconds = (existing.totalSpinningTimeSeconds - sessionDuration).coerceAtLeast(0),
+            averageSessionDurationSeconds = if (newCount > 0) {
+                (existing.totalSpinningTimeSeconds - sessionDuration).coerceAtLeast(0) / newCount
+            } else 0L
+        )
+        lifetimeStatsDao.upsert(newStats)
     }
 
     /**
@@ -1047,6 +1376,100 @@ class WheelViewModel(
         stopNotificationService()
         _isPaused.value = false
         saveSessionWithDedication()
+    }
+
+    /**
+     * T17: Detects whether the most-recent persisted session was interrupted and
+     * is conservatively resumable. Returns the [Session] to offer the user, or null.
+     *
+     * All three conditions must hold:
+     *  - recent: `endedAt == null` OR `startedAt` within [SESSION_NEW_THRESHOLD_MS]
+     *  - had motion: `rotationCount > 0`
+     *  - interrupted: `dedication == null` (a normally-ended session is not resumable)
+     */
+    suspend fun detectResumableSession(): Session? {
+        val recent = sessionDao.getMostRecentSession() ?: return null
+        val now = System.currentTimeMillis()
+        val isRecent = recent.endedAt == null ||
+            (now - recent.startedAt) <= SESSION_NEW_THRESHOLD_MS
+        val hasRotations = recent.rotationCount > 0L
+        val isInterrupted = recent.dedication == null
+        return if (isRecent && hasRotations && isInterrupted) recent else null
+    }
+
+    /**
+     * T17: Resumes practice from a previously-interrupted session.
+     *
+     * Restores the in-memory counters and `startedAt` so the timer keeps counting
+     * from the original start. Deletes the prior DB record (it is being replaced
+     * by the in-flight resumed session, which will be re-persisted on the next
+     * endSession/onCleared). Re-enters active session state, restarts the
+     * notification service and session timer.
+     *
+     * Does NOT restore transient physics state (angularVelocity, drag history).
+     */
+    fun resumeFromSession(session: Session) {
+        viewModelScope.launch {
+            // Drop the prior record so it isn't double-counted when the resumed
+            // session is later saved. The in-memory state below replaces it.
+            if (session.id != 0L) {
+                sessionDao.deleteSessionById(session.id)
+            }
+
+            // Mirror startSessionIfNeeded() restoration, but preserve the
+            // accumulated rotations/start time instead of zeroing them.
+            sessionStartTime = session.startedAt
+            currentSessionRotations = session.rotationCount
+            currentSessionMantras = session.totalMantras
+            _rotationCount.value = session.rotationCount
+            _sessionMantras.value = session.totalMantras
+            _hasActiveSession.value = true
+            _isPaused.value = false
+            _peakRpm.value = session.peakRpm
+            _averageRpm.value = session.averageRpm
+            // Transient RPM samples are not persisted — reset so the running
+            // average re-converges from zero rather than from stale state.
+            rpmSamples.clear()
+            rpmSampleCount = 0
+            sessionStartRpmSum = 0f
+            val elapsedMs = (System.currentTimeMillis() - session.startedAt)
+                .coerceAtLeast(0L)
+            _sessionDuration.value = elapsedMs
+            _sessionDurationSeconds.value = elapsedMs / 1000
+            pendingSessionLabel = session.label
+
+            startNotificationService()
+
+            // Restart the session timer (mirrors startSessionIfNeeded). The
+            // timeGoalReached flag is pre-set when the resumed session already
+            // meets the goal so we don't immediately fire the milestone haptic.
+            sessionTimerJob?.cancel()
+            sessionTimerJob = viewModelScope.launch {
+                var timeGoalReached = _sessionTimeGoalSeconds.value > 0 &&
+                    _sessionDurationSeconds.value >= _sessionTimeGoalSeconds.value
+                while (isActive) {
+                    _sessionDuration.value = System.currentTimeMillis() - session.startedAt
+                    val newSeconds = _sessionDuration.value / 1000
+                    _sessionDurationSeconds.value = newSeconds
+
+                    val goalSecs = _sessionTimeGoalSeconds.value
+                    if (goalSecs > 0 && newSeconds >= goalSecs && !timeGoalReached) {
+                        timeGoalReached = true
+                        triggerMilestoneHaptic()
+                    }
+
+                    if (notificationActive && !_isPaused.value) {
+                        SessionNotificationService.update(
+                            newSeconds,
+                            _sessionMantras.value,
+                            paused = false
+                        )
+                    }
+
+                    delay(SESSION_TIMER_INTERVAL_MS)
+                }
+            }
+        }
     }
 
     /**
@@ -1111,7 +1534,9 @@ class WheelViewModel(
             peakRpm = pending.peakRpm,
             totalSpins = pending.rotations,
             intention = pending.intention,
-            sessionGoal = pending.sessionGoal
+            sessionGoal = pending.sessionGoal,
+            wheelId = pending.wheelId,
+            label = pendingSessionLabel
         )
     }
 
@@ -1138,7 +1563,9 @@ class WheelViewModel(
             peakRpm = _peakRpm.value,
             totalSpins = currentSessionRotations,
             intention = _currentIntention.value.ifBlank { null },
-            sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null
+            sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null,
+            wheelId = _currentWheelId.value,
+            label = pendingSessionLabel
         )
     }
 
@@ -1168,12 +1595,13 @@ class WheelViewModel(
         )
 
         lifetimeStatsDao.upsert(newStats)
+        checkAchievements(newStats.totalMantras)
     }
 
     private fun startSessionIfNeeded() {
         val now = System.currentTimeMillis()
         val needsNewSession = sessionStartTime == null ||
-            (lastSessionEndTime != null && now - lastSessionEndTime!! > SESSION_NEW_THRESHOLD_MS)
+            (lastSessionEndTime != null && now - lastSessionEndTime!! > sessionMergeThresholdMs)
 
         if (needsNewSession) {
             sessionStartTime = now
@@ -1188,6 +1616,17 @@ class WheelViewModel(
             rpmSamples.clear()
             rpmSampleCount = 0
             sessionStartRpmSum = 0f
+
+            // T15: auto-suggest morning/evening label. Attribution matches the rule in
+            // observeTodayProgress() / TodayProgressCard — hour is strictly less than
+            // reminderEveningHour for "morning", otherwise "evening". Null when disabled.
+            pendingSessionLabel = if (autoLabelSessionsEnabled) {
+                val cal = Calendar.getInstance(TimeZone.getDefault())
+                cal.timeInMillis = now
+                if (cal.get(Calendar.HOUR_OF_DAY) < cachedReminderEveningHour) "morning" else "evening"
+            } else {
+                null
+            }
 
             // Start notification service
             startNotificationService()
@@ -1227,7 +1666,9 @@ class WheelViewModel(
         physicsJob?.cancel()
         lastFrameTime = System.currentTimeMillis()
         physicsJob = viewModelScope.launch {
-            while (isActive && abs(_angularVelocity.value) > STOP_THRESHOLD) {
+            // Loop stays alive while there is motion, particles to animate, or auto-spin is driving
+            // (so the torque-limited ramp can accelerate the wheel up from rest).
+            while (isActive && (abs(_angularVelocity.value) > STOP_THRESHOLD || _starParticles.value.isNotEmpty() || _autoSpinEnabled.value)) {
                 val currentTime = System.currentTimeMillis()
                 val deltaTime = (currentTime - lastFrameTime).coerceAtLeast(1L) / 1000f
                 lastFrameTime = currentTime
@@ -1237,22 +1678,34 @@ class WheelViewModel(
                                      _spinMode.value == SpinMode.TWO_HANDED_AUTO ||
                                      (_twoHandedEnabled.value && _autoSpinEnabled.value)
 
-                // Calculate velocity - in auto mode we maintain target, otherwise apply friction
+                // Calculate velocity - in auto mode we ramp toward target, otherwise apply friction
                 val currentOmega = _angularVelocity.value
                 val calculatedVelocity = if (_autoSpinEnabled.value && !isTwoHandedMode) {
-                    // Auto-spin mode: maintain constant velocity at target RPM
+                    // Auto-spin: torque-limited ramp toward target RPM (~0.5-1.5s to reach set speed)
                     val targetOmega = _autoSpinRpm.value * 2 * PI.toFloat() / 60f
-                    // Smoothly approach target velocity
-                    currentOmega + (targetOmega - currentOmega) * 0.1f
+                    val gap = targetOmega - currentOmega
+                    val maxStepThisFrame = AUTO_SPIN_MAX_ACCEL_PER_FRAME * (deltaTime * 60f)
+                    currentOmega + gap.coerceIn(-maxStepThisFrame, maxStepThisFrame)
                 } else {
-                    // Manual or two-handed mode: apply friction decay
+                    // Manual / two-handed / coast: friction decay ω_{t+1} = ω_t × (1 - μ × Δt)
                     val frictionCoefficient = when {
                         isTwoHandedMode && _twoHandedEngaged.value -> TWO_HANDED_FRICTION
                         else -> _baseFriction.value
                     }
+                    val frictionDecayed = currentOmega * (1f - frictionCoefficient * deltaTime)
 
-                    // Apply friction decay: ω_{t+1} = ω_t × (1 - μ × Δt)
-                    currentOmega * (1f - frictionCoefficient * deltaTime)
+                    // Weight→wheel coupling: the chain weight acts as a pendulum restoring force.
+                    // Applied as additional friction opposing motion, capped to never reverse direction.
+                    val weightAngleRad = _weightAngle.value * PI.toFloat() / 180f
+                    val couplingDecel = WEIGHT_COUPLING_COEFFICIENT * sin(weightAngleRad) * deltaTime
+                    val withCoupling = when {
+                        frictionDecayed > 0f -> (frictionDecayed - couplingDecel).coerceAtLeast(0f)
+                        frictionDecayed < 0f -> (frictionDecayed + couplingDecel).coerceAtMost(0f)
+                        else -> frictionDecayed
+                    }
+
+                    // Static friction: clean halt when very slow and no torque applied this frame.
+                    if (abs(withCoupling) < STATIC_FRICTION_THRESHOLD) 0f else withCoupling
                 }
 
                 _angularVelocity.value = if (abs(calculatedVelocity) < STOP_THRESHOLD) 0f else calculatedVelocity
@@ -1299,6 +1752,46 @@ class WheelViewModel(
                 // Update spinning state
                 _isSpinning.value = abs(_angularVelocity.value) > STOP_THRESHOLD
 
+                // Update and prune particles
+                val currentParticles = _starParticles.value.toMutableList()
+                val iterator = currentParticles.listIterator()
+                while (iterator.hasNext()) {
+                    val p = iterator.next()
+                    val newLifetime = p.lifetime - deltaTime
+                    if (newLifetime <= 0f) {
+                        iterator.remove()
+                    } else {
+                        iterator.set(
+                            p.copy(
+                                y = p.y - p.velocityY * deltaTime,
+                                alpha = (newLifetime / 1.5f).coerceIn(0f, 1f),
+                                lifetime = newLifetime
+                            )
+                        )
+                    }
+                }
+
+                // Spawn new particles while spinning
+                val velocity = abs(_angularVelocity.value)
+                if (velocity > STOP_THRESHOLD && canvasWidth > 0 && canvasHeight > 0) {
+                    val spawnProbability = (velocity / MAX_ANGULAR_VELOCITY) * 0.25f
+                    if (Math.random() < spawnProbability && currentParticles.size < 40) {
+                        currentParticles.add(
+                            StarParticle(
+                                id = nextParticleId++,
+                                x = canvasWidth / 2f + (Math.random().toFloat() - 0.5f) * (canvasWidth * 0.4f),
+                                y = canvasHeight * 0.35f + (Math.random().toFloat() - 0.5f) * (canvasHeight * 0.1f),
+                                size = 6f + Math.random().toFloat() * 10f,
+                                alpha = 1.0f,
+                                colorIndex = (Math.random() * 3).toInt(),
+                                velocityY = 60f + Math.random().toFloat() * 80f,
+                                lifetime = 1.0f + Math.random().toFloat() * 0.8f
+                            )
+                        )
+                    }
+                }
+                _starParticles.value = currentParticles
+
                 delay(ANIMATION_FRAME_TIME_MS)
             }
 
@@ -1323,6 +1816,8 @@ class WheelViewModel(
         }
     }
 
+    private var lastWidgetUpdateMs = 0L
+
     private fun onRotationComplete(count: Long) {
         currentSessionRotations += count
 
@@ -1333,21 +1828,61 @@ class WheelViewModel(
             val mantrasThisRotation = _mantrasPerRotation.value.toBigInteger() * count.toBigInteger()
             val newTotalMantras = (currentStats?.totalMantras ?: BigInteger.ZERO) + mantrasThisRotation
 
-            lifetimeStatsDao.upsert(
-                LifetimeStats(
-                    id = 1,
-                    totalRotations = newTotalRotations,
-                    totalMantras = newTotalMantras,
-                    sessionsCompleted = currentStats?.sessionsCompleted ?: 0L,
-                    firstSessionAt = currentStats?.firstSessionAt ?: System.currentTimeMillis()
-                )
+            // copy() preserves totalSpinningTimeSeconds/averageSessionDurationSeconds;
+            // a fresh LifetimeStats(...) would clobber them to 0L via upsert on every rotation.
+            val newStats = currentStats?.copy(
+                totalRotations = newTotalRotations,
+                totalMantras = newTotalMantras
+            ) ?: LifetimeStats(
+                id = 1,
+                totalRotations = newTotalRotations,
+                totalMantras = newTotalMantras,
+                sessionsCompleted = 0L,
+                firstSessionAt = System.currentTimeMillis()
             )
 
+            lifetimeStatsDao.upsert(newStats)
+
             _lifetimeMantras.value = newTotalMantras
+            
+            // Check achievements
+            checkAchievements(newTotalMantras)
+        }
+
+        // Spawn rotation completion particles
+        if (canvasWidth > 0 && canvasHeight > 0) {
+            val newParticles = mutableListOf<StarParticle>()
+            for (i in 0 until 5) {
+                newParticles.add(
+                    StarParticle(
+                        id = nextParticleId++,
+                        x = canvasWidth / 2f + (Math.random().toFloat() - 0.5f) * (canvasWidth * 0.35f),
+                        y = canvasHeight * 0.35f + (Math.random().toFloat() - 0.5f) * (canvasHeight * 0.1f),
+                        size = 8f + Math.random().toFloat() * 10f,
+                        alpha = 1.0f,
+                        colorIndex = (Math.random() * 3).toInt(),
+                        velocityY = 80f + Math.random().toFloat() * 80f,
+                        lifetime = 1.2f + Math.random().toFloat() * 0.6f
+                    )
+                )
+            }
+            _starParticles.value = _starParticles.value + newParticles
+            // Ensure physics loop is active to animate the particles
+            if (abs(_angularVelocity.value) <= STOP_THRESHOLD) {
+                startPhysicsLoop()
+            }
         }
 
         updateSessionMantras()
         triggerHapticTick()
+
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - lastWidgetUpdateMs >= WIDGET_UPDATE_THROTTLE_MS) {
+            lastWidgetUpdateMs = nowMs
+            viewModelScope.launch {
+                runCatching { PrayerWheelWidget().updateAll(appContext) }
+            }
+        }
     }
 
     private fun updateSessionMantras() {
@@ -1376,7 +1911,8 @@ class WheelViewModel(
             averageRpm = avgRpm,
             peakRpm = _peakRpm.value,
             intention = _currentIntention.value.ifBlank { null },
-            sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null
+            sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null,
+            wheelId = _currentWheelId.value
         )
 
         _hasActiveSession.value = false
@@ -1462,6 +1998,23 @@ class WheelViewModel(
         }
     }
 
+    private suspend fun checkAchievements(totalMantras: BigInteger) {
+        val currentlyUnlocked = _unlockedAchievements.value
+        val allAchievements = Achievements.ALL
+        
+        for (achievement in allAchievements) {
+            if (achievement.id !in currentlyUnlocked && totalMantras >= achievement.mantrasRequired) {
+                userPreferences.unlockAchievement(achievement.id)
+                triggerMilestoneHaptic()
+                _newlyUnlockedAchievement.value = achievement
+            }
+        }
+    }
+
+    fun dismissAchievementCelebration() {
+        _newlyUnlockedAchievement.value = null
+    }
+
     private fun calculateAngularChange(newAngle: Float): Float {
         if (dragHistory.isEmpty()) return 0f
         val lastAngle = dragHistory.last().angle
@@ -1517,6 +2070,10 @@ class WheelViewModel(
         _isAppInForeground.value = inForeground
     }
 
+    fun startSessionFromWidget() {
+        startSessionIfNeeded()
+    }
+
     fun setBackgroundVibrationEnabled(enabled: Boolean) {
         _backgroundVibrationEnabled.value = enabled
         viewModelScope.launch {
@@ -1558,13 +2115,27 @@ class WheelViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        // Directly save session to Room without showing dedication prompt
-        kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
-            val session = createSessionFromCurrentState()
-            if (session != null) {
-                sessionDao.insert(session)
-                updateLifetimeStats(session)
-            }
+        // WorkManager (not GlobalScope) survives process death, so the session
+        // is not lost if the app is killed mid-write. dedication=null because
+        // no UI context is available here; user can edit in History.
+        val snapshot = createSessionFromCurrentState()
+        if (snapshot != null) {
+            SessionSaveWorker.enqueue(
+                context = appContext,
+                startedAt = snapshot.startedAt,
+                rotations = snapshot.rotationCount,
+                mantrasPerRotation = snapshot.mantrasPerRotation,
+                totalMantras = snapshot.totalMantras,
+                mantraId = snapshot.mantraId,
+                mode = snapshot.mode,
+                averageRpm = snapshot.averageRpm,
+                peakRpm = snapshot.peakRpm,
+                intention = snapshot.intention,
+                sessionGoal = snapshot.sessionGoal,
+                wheelId = snapshot.wheelId,
+                label = snapshot.label,
+                sessionDurationSeconds = _sessionDurationSeconds.value
+            )
         }
         physicsJob?.cancel()
         sessionTimerJob?.cancel()

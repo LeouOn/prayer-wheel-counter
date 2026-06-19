@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,9 +31,11 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.prayerwheel.app.data.model.WheelSkin
 import com.prayerwheel.app.data.model.WheelSkins
@@ -44,6 +47,7 @@ import com.prayerwheel.app.data.model.WheelSkins
 @Composable
 fun WheelCustomizer(
     selectedSkinId: String,
+    unlockedAchievements: Set<String>,
     onSkinSelected: (WheelSkin) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -80,12 +84,16 @@ fun WheelCustomizer(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 WheelSkins.ALL.forEach { skin ->
+                    val isLocked = !isSkinUnlocked(skin.id, unlockedAchievements)
                     SkinCard(
                         skin = skin,
                         isSelected = skin.id == selectedSkinId,
+                        isLocked = isLocked,
                         onClick = {
-                            onSkinSelected(skin)
-                            onDismiss()
+                            if (!isLocked) {
+                                onSkinSelected(skin)
+                                onDismiss()
+                            }
                         }
                     )
                 }
@@ -96,6 +104,31 @@ fun WheelCustomizer(
     }
 }
 
+private fun isSkinUnlocked(skinId: String, unlockedAchievements: Set<String>): Boolean {
+    val requiredAchievement = when (skinId) {
+        "sandalwood" -> "mala_complete"
+        "lapis_lazuli" -> "ten_thousand"
+        "turquoise" -> "hundred_thousand"
+        "ruby" -> "ten_million"
+        "amethyst" -> "billion"
+        "rainbow" -> "trillion"
+        else -> null
+    }
+    return requiredAchievement == null || unlockedAchievements.contains(requiredAchievement)
+}
+
+private fun getSkinUnlockRequirement(skinId: String): String {
+    return when (skinId) {
+        "sandalwood" -> "Mala Complete"
+        "lapis_lazuli" -> "10K Mantras"
+        "turquoise" -> "100K Mantras"
+        "ruby" -> "10M Mantras"
+        "amethyst" -> "1B Mantras"
+        "rainbow" -> "1T Mantras"
+        else -> ""
+    }
+}
+
 /**
  * A card displaying a skin option with color preview circles.
  */
@@ -103,19 +136,20 @@ fun WheelCustomizer(
 private fun SkinCard(
     skin: WheelSkin,
     isSelected: Boolean,
+    isLocked: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier
             .width(140.dp)
-            .clickable(onClick = onClick),
+            .clickable(enabled = !isLocked, onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
+            containerColor = when {
+                isSelected -> MaterialTheme.colorScheme.primaryContainer
+                isLocked -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                else -> MaterialTheme.colorScheme.surfaceVariant
             }
         ),
         border = if (isSelected) {
@@ -125,7 +159,8 @@ private fun SkinCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(12.dp)
+                .alpha(if (isLocked) 0.5f else 1f),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Skin name
@@ -136,39 +171,58 @@ private fun SkinCard(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
-            // Color preview circles
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(bottom = 8.dp)
-            ) {
-                ColorCircle(color = Color(skin.cylinderColor), label = "Cylinder")
-                ColorCircle(color = Color(skin.capColor), label = "Cap")
-            }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(bottom = 8.dp)
-            ) {
-                ColorCircle(color = Color(skin.stemColor), label = "Stem")
-                ColorCircle(color = Color(skin.crystalColor), label = "Crystal")
-            }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                ColorCircle(color = Color(skin.weightColor), label = "Weight")
-                ColorCircle(color = Color(skin.rayColor), label = "Rays")
-            }
-
-            // Selection checkmark
-            if (isSelected) {
+            if (isLocked) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = "Selected",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Locked",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
                 )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = getSkinUnlockRequirement(skin.id),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            } else {
+                // Color preview circles
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(bottom = 8.dp)
+                ) {
+                    ColorCircle(color = Color(skin.cylinderColor), label = "Cylinder")
+                    ColorCircle(color = Color(skin.capColor), label = "Cap")
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(bottom = 8.dp)
+                ) {
+                    ColorCircle(color = Color(skin.stemColor), label = "Stem")
+                    ColorCircle(color = Color(skin.crystalColor), label = "Crystal")
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    ColorCircle(color = Color(skin.weightColor), label = "Weight")
+                    ColorCircle(color = Color(skin.rayColor), label = "Rays")
+                }
+
+                // Selection checkmark
+                if (isSelected) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Selected",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
     }
