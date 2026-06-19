@@ -49,6 +49,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.math.BigInteger
 import java.util.Calendar
 import java.util.TimeZone
@@ -103,6 +105,14 @@ class WheelViewModel(
         private const val HAPTIC_MILESTONE_DURATION = 20L
         private const val SESSION_TIMER_INTERVAL_MS = 1000L
     }
+
+    /**
+     * Serializes all lifetime_stats DB read-modify-write sequences. Without this,
+     * concurrent coroutines (session-end save, manual log, undo-delete, subtract
+     * on delete/resume) can read the same row, increment separately, and the
+     * loser's upsert clobbers the winner's increment — a silent lost update.
+     */
+    private val lifetimeStatsMutex = Mutex()
 
     /**
      * Current angular velocity in radians per second.
@@ -1239,28 +1249,31 @@ class WheelViewModel(
 
             sessionDao.insert(session)
 
-            // Update lifetime stats
-            val existing = lifetimeStatsDao.getStats()
-            val newStats = existing?.copy(
-                totalRotations = existing.totalRotations + session.rotationCount,
-                totalMantras = existing.totalMantras + session.totalMantras,
-                sessionsCompleted = existing.sessionsCompleted + 1,
-                totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + durationSeconds,
-                averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                    (existing.totalSpinningTimeSeconds + durationSeconds) / (existing.sessionsCompleted + 1)
-                } else durationSeconds
-            ) ?: LifetimeStats(
-                id = 1,
-                totalRotations = session.rotationCount,
-                totalMantras = session.totalMantras,
-                sessionsCompleted = 1,
-                firstSessionAt = session.startedAt,
-                totalSpinningTimeSeconds = durationSeconds,
-                averageSessionDurationSeconds = durationSeconds
-            )
-
-            lifetimeStatsDao.upsert(newStats)
-            checkAchievements(newStats.totalMantras)
+            // Update lifetime stats under the mutex so this read-modify-write cannot
+            // interleave with session-end, undo-delete, or subtract operations.
+            val newTotalMantras = lifetimeStatsMutex.withLock {
+                val existing = lifetimeStatsDao.getStats()
+                val updated = existing?.copy(
+                    totalRotations = existing.totalRotations + session.rotationCount,
+                    totalMantras = existing.totalMantras + session.totalMantras,
+                    sessionsCompleted = existing.sessionsCompleted + 1,
+                    totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + durationSeconds,
+                    averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
+                        (existing.totalSpinningTimeSeconds + durationSeconds) / (existing.sessionsCompleted + 1)
+                    } else durationSeconds
+                ) ?: LifetimeStats(
+                    id = 1,
+                    totalRotations = session.rotationCount,
+                    totalMantras = session.totalMantras,
+                    sessionsCompleted = 1,
+                    firstSessionAt = session.startedAt,
+                    totalSpinningTimeSeconds = durationSeconds,
+                    averageSessionDurationSeconds = durationSeconds
+                )
+                lifetimeStatsDao.upsert(updated)
+                updated.totalMantras
+            }
+            checkAchievements(newTotalMantras)
         }
     }
 
@@ -1289,43 +1302,50 @@ class WheelViewModel(
      */
     fun undoDeleteSession(session: Session) {        viewModelScope.launch {
             sessionDao.insert(session)
-            val existing = lifetimeStatsDao.getStats()
             val sessionDurationSeconds = ((session.endedAt ?: session.startedAt) - session.startedAt) / 1000
-            val newStats = existing?.copy(
-                totalRotations = existing.totalRotations + session.rotationCount,
-                totalMantras = existing.totalMantras + session.totalMantras,
-                sessionsCompleted = existing.sessionsCompleted + 1,
-                totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
-                averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                    (existing.totalSpinningTimeSeconds + sessionDurationSeconds) / (existing.sessionsCompleted + 1)
-                } else sessionDurationSeconds
-            ) ?: LifetimeStats(
-                id = 1,
-                totalRotations = session.rotationCount,
-                totalMantras = session.totalMantras,
-                sessionsCompleted = 1,
-                firstSessionAt = session.startedAt,
-                totalSpinningTimeSeconds = sessionDurationSeconds,
-                averageSessionDurationSeconds = sessionDurationSeconds
-            )
-            lifetimeStatsDao.upsert(newStats)
+            // Hold the mutex across read-modify-write to serialize with other lifetime_stats writers.
+            lifetimeStatsMutex.withLock {
+                val existing = lifetimeStatsDao.getStats()
+                val newStats = existing?.copy(
+                    totalRotations = existing.totalRotations + session.rotationCount,
+                    totalMantras = existing.totalMantras + session.totalMantras,
+                    sessionsCompleted = existing.sessionsCompleted + 1,
+                    totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
+                    averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
+                        (existing.totalSpinningTimeSeconds + sessionDurationSeconds) / (existing.sessionsCompleted + 1)
+                    } else sessionDurationSeconds
+                ) ?: LifetimeStats(
+                    id = 1,
+                    totalRotations = session.rotationCount,
+                    totalMantras = session.totalMantras,
+                    sessionsCompleted = 1,
+                    firstSessionAt = session.startedAt,
+                    totalSpinningTimeSeconds = sessionDurationSeconds,
+                    averageSessionDurationSeconds = sessionDurationSeconds
+                )
+                lifetimeStatsDao.upsert(newStats)
+            }
         }
     }
 
     private suspend fun subtractSessionFromStats(session: Session) {
-        val existing = lifetimeStatsDao.getStats() ?: return
-        val sessionDuration = ((session.endedAt ?: session.startedAt) - session.startedAt) / 1000
-        val newCount = (existing.sessionsCompleted - 1).coerceAtLeast(0)
-        val newStats = existing.copy(
-            totalRotations = (existing.totalRotations - session.rotationCount).coerceAtLeast(0),
-            totalMantras = (existing.totalMantras - session.totalMantras).coerceAtLeast(java.math.BigInteger.ZERO),
-            sessionsCompleted = newCount,
-            totalSpinningTimeSeconds = (existing.totalSpinningTimeSeconds - sessionDuration).coerceAtLeast(0),
-            averageSessionDurationSeconds = if (newCount > 0) {
-                (existing.totalSpinningTimeSeconds - sessionDuration).coerceAtLeast(0) / newCount
-            } else 0L
-        )
-        lifetimeStatsDao.upsert(newStats)
+        // Hold the mutex across read-modify-write so concurrent adders (session save,
+        // manual log, undo-delete) can't interleave with this subtraction and clobber it.
+        lifetimeStatsMutex.withLock {
+            val existing = lifetimeStatsDao.getStats() ?: return@withLock
+            val sessionDuration = ((session.endedAt ?: session.startedAt) - session.startedAt) / 1000
+            val newCount = (existing.sessionsCompleted - 1).coerceAtLeast(0)
+            val newStats = existing.copy(
+                totalRotations = (existing.totalRotations - session.rotationCount).coerceAtLeast(0),
+                totalMantras = (existing.totalMantras - session.totalMantras).coerceAtLeast(java.math.BigInteger.ZERO),
+                sessionsCompleted = newCount,
+                totalSpinningTimeSeconds = (existing.totalSpinningTimeSeconds - sessionDuration).coerceAtLeast(0),
+                averageSessionDurationSeconds = if (newCount > 0) {
+                    (existing.totalSpinningTimeSeconds - sessionDuration).coerceAtLeast(0) / newCount
+                } else 0L
+            )
+            lifetimeStatsDao.upsert(newStats)
+        }
     }
 
     /**
@@ -1412,8 +1432,13 @@ class WheelViewModel(
         viewModelScope.launch {
             // Drop the prior record so it isn't double-counted when the resumed
             // session is later saved. The in-memory state below replaces it.
+            // Also roll back this session's contribution from lifetime_stats — without
+            // this, the resumed session's mantras get double-counted: once when the
+            // original was saved, again when updateLifetimeStats() runs at the resumed
+            // session's end. updateLifetimeStats() re-adds the full accumulated total.
             if (session.id != 0L) {
                 sessionDao.deleteSessionById(session.id)
+                subtractSessionFromStats(session)
             }
 
             // Mirror startSessionIfNeeded() restoration, but preserve the
@@ -1574,27 +1599,32 @@ class WheelViewModel(
      */
     private suspend fun updateLifetimeStats(session: Session) {
         val sessionDurationSeconds = _sessionDurationSeconds.value
-        val existing = lifetimeStatsDao.getStats()
+        // Hold the mutex across the read-modify-write so concurrent writers (manual log,
+        // undo-delete, subtract) can't interleave and clobber each other's increment.
+        val newStats = lifetimeStatsMutex.withLock {
+            val existing = lifetimeStatsDao.getStats()
 
-        val newStats = existing?.copy(
-            totalRotations = existing.totalRotations + session.rotationCount,
-            totalMantras = existing.totalMantras + session.totalMantras,
-            sessionsCompleted = existing.sessionsCompleted + 1,
-            totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
-            averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                (existing.totalSpinningTimeSeconds + sessionDurationSeconds) / (existing.sessionsCompleted + 1)
-            } else sessionDurationSeconds
-        ) ?: LifetimeStats(
-            id = 1,
-            totalRotations = session.rotationCount,
-            totalMantras = session.totalMantras,
-            sessionsCompleted = 1,
-            firstSessionAt = session.startedAt,
-            totalSpinningTimeSeconds = sessionDurationSeconds,
-            averageSessionDurationSeconds = sessionDurationSeconds
-        )
+            val updated = existing?.copy(
+                totalRotations = existing.totalRotations + session.rotationCount,
+                totalMantras = existing.totalMantras + session.totalMantras,
+                sessionsCompleted = existing.sessionsCompleted + 1,
+                totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
+                averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
+                    (existing.totalSpinningTimeSeconds + sessionDurationSeconds) / (existing.sessionsCompleted + 1)
+                } else sessionDurationSeconds
+            ) ?: LifetimeStats(
+                id = 1,
+                totalRotations = session.rotationCount,
+                totalMantras = session.totalMantras,
+                sessionsCompleted = 1,
+                firstSessionAt = session.startedAt,
+                totalSpinningTimeSeconds = sessionDurationSeconds,
+                averageSessionDurationSeconds = sessionDurationSeconds
+            )
 
-        lifetimeStatsDao.upsert(newStats)
+            lifetimeStatsDao.upsert(updated)
+            updated
+        }
         checkAchievements(newStats.totalMantras)
     }
 
@@ -1822,30 +1852,16 @@ class WheelViewModel(
         currentSessionRotations += count
 
         viewModelScope.launch {
-            // Update lifetime stats
-            val currentStats = lifetimeStatsDao.getStats()
-            val newTotalRotations = (currentStats?.totalRotations ?: 0L) + count
+            // In-memory lifetime mantras only — provides the live display while spinning.
+            // The lifetime_stats DB row is written EXACTLY ONCE per session at session end
+            // via updateLifetimeStats(). Writing it here on every rotation caused every
+            // session's mantras to be double-counted: once incrementally per-rotation here,
+            // then again at session save, inflating lifetime totals by N×.
             val mantrasThisRotation = _mantrasPerRotation.value.toBigInteger() * count.toBigInteger()
-            val newTotalMantras = (currentStats?.totalMantras ?: BigInteger.ZERO) + mantrasThisRotation
-
-            // copy() preserves totalSpinningTimeSeconds/averageSessionDurationSeconds;
-            // a fresh LifetimeStats(...) would clobber them to 0L via upsert on every rotation.
-            val newStats = currentStats?.copy(
-                totalRotations = newTotalRotations,
-                totalMantras = newTotalMantras
-            ) ?: LifetimeStats(
-                id = 1,
-                totalRotations = newTotalRotations,
-                totalMantras = newTotalMantras,
-                sessionsCompleted = 0L,
-                firstSessionAt = System.currentTimeMillis()
-            )
-
-            lifetimeStatsDao.upsert(newStats)
-
+            val newTotalMantras = _lifetimeMantras.value + mantrasThisRotation
             _lifetimeMantras.value = newTotalMantras
-            
-            // Check achievements
+
+            // Check achievements (reads the in-memory mantras value; does not touch lifetime_stats DB).
             checkAchievements(newTotalMantras)
         }
 
