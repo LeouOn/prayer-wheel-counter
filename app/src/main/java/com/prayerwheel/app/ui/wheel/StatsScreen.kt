@@ -29,7 +29,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.prayerwheel.app.data.db.dao.TimeStats
 import com.prayerwheel.app.data.model.LifetimeStats
@@ -39,9 +41,12 @@ import com.prayerwheel.app.data.model.Mantras
 import com.prayerwheel.app.data.model.Session
 import com.prayerwheel.app.ui.components.NumberFormatter
 import java.math.BigInteger
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
+import com.prayerwheel.app.data.model.WheelStats
+import com.prayerwheel.app.data.model.SavedWheel
 
 /**
  * Practice statistics screen showing lifetime stats and per-mantra breakdown.
@@ -51,12 +56,15 @@ import java.util.Locale
 fun StatsScreen(
     lifetimeStats: LifetimeStats?,
     mantraStats: List<MantraStats>,
+    wheelStats: List<WheelStats>,
+    savedWheels: List<SavedWheel>,
     last7DaysStats: TimeStats?,
     last30DaysStats: TimeStats?,
     allTimeStats: TimeStats?,
     recentSessions: List<Session>,
     onNavigateBack: () -> Unit,
     onNavigateToCalendar: () -> Unit,
+    onNavigateToAchievements: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Scaffold(
@@ -77,6 +85,12 @@ fun StatsScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onNavigateToAchievements) {
+                        Text(
+                            text = "🪷",
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    }
                     IconButton(onClick = onNavigateToCalendar) {
                         Icon(
                             imageVector = Icons.Default.DateRange,
@@ -104,7 +118,16 @@ fun StatsScreen(
 
             // Lifetime Summary Card
             item {
-                LifetimeSummaryCard(stats = lifetimeStats)
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Reflecting on accumulated merit",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontStyle = FontStyle.Italic,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+                    )
+                    LifetimeSummaryCard(stats = lifetimeStats)
+                }
             }
 
             // Time Period Summary
@@ -147,6 +170,38 @@ fun StatsScreen(
             item {
                 Spacer(modifier = Modifier.height(16.dp))
             }
+
+            // Per-Wheel Breakdown Header
+            item {
+                Text(
+                    text = "Per-Wheel Breakdown",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+
+            if (wheelStats.isEmpty()) {
+                item {
+                    Text(
+                        text = "No wheel-specific practice recorded.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                    )
+                }
+            } else {
+                items(wheelStats) { stats ->
+                    WheelStatsCard(
+                        stats = stats,
+                        savedWheels = savedWheels,
+                        lifetimeStats = lifetimeStats
+                    )
+                }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+            }
         }
     }
 }
@@ -175,63 +230,65 @@ private fun LifetimeSummaryCard(stats: LifetimeStats?) {
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            // Sessions and spinning time
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = formatBigNumber(stats?.totalMantras ?: BigInteger.ZERO),
+                    style = MaterialTheme.typography.displaySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Total Mantras",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 StatItem(
-                    label = "Sessions",
-                    value = (stats?.sessionsCompleted ?: 0L).toString()
+                    label = "Total Rotations",
+                    value = formatNumber(stats?.totalRotations ?: 0L)
                 )
                 StatItem(
-                    label = "Spinning Time",
-                    value = formatDuration(stats?.totalSpinningTimeSeconds ?: 0L)
+                    label = "Sessions",
+                    value = (stats?.sessionsCompleted ?: 0L).toString()
                 )
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Average session duration
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
+                StatItem(
+                    label = "Practice Time",
+                    value = formatDuration(stats?.totalSpinningTimeSeconds ?: 0L)
+                )
                 StatItem(
                     label = "Avg Session",
                     value = formatDuration(stats?.averageSessionDurationSeconds ?: 0L)
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Total mantras (prominent)
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "Total Mantras",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                )
-                Text(
-                    text = formatBigNumber(stats?.totalMantras ?: BigInteger.ZERO),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            }
-
-            // Practice since
             stats?.firstSessionAt?.let { timestamp ->
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "Practicing since ${formatDate(timestamp)}",
+                    text = "Practice since ${formatDate(timestamp)}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
@@ -455,10 +512,12 @@ private fun formatBigNumber(mantras: BigInteger): String {
  * Formats a duration in seconds to a readable string.
  */
 private fun formatDuration(seconds: Long): String {
-    val hours = seconds / 3600
+    val days = seconds / 86400
+    val hours = (seconds % 86400) / 3600
     val minutes = (seconds % 3600) / 60
-    
+
     return when {
+        days > 0 -> "${days}d ${hours}h"
         hours > 0 -> "${hours}h ${minutes}m"
         minutes > 0 -> "${minutes}m"
         seconds > 0 -> "${seconds}s"
@@ -466,10 +525,83 @@ private fun formatDuration(seconds: Long): String {
     }
 }
 
-/**
- * Formats a timestamp to a readable date string.
- */
 private fun formatDate(timestamp: Long): String {
-    val sdf = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
-    return sdf.format(Date(timestamp))
+    val zoned = Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault())
+    return zoned.format(DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.getDefault()))
+}
+
+/**
+ * Card showing statistics for a specific wheel.
+ */
+@Composable
+private fun WheelStatsCard(
+    stats: WheelStats,
+    savedWheels: List<SavedWheel>,
+    lifetimeStats: LifetimeStats?
+) {
+    val wheel = stats.wheelId?.let { id -> savedWheels.find { it.id == id } }
+    val displayName = wheel?.name ?: if (stats.wheelId != null) "Deleted Wheel" else "Unspecified Wheel"
+    val percentage = if (lifetimeStats != null && lifetimeStats.totalRotations > 0) {
+        (stats.totalRotations.toFloat() / lifetimeStats.totalRotations * 100)
+    } else {
+        0f
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            // Wheel name
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "${String.format(Locale.getDefault(), "%.1f", percentage)}%",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Stats row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "${stats.sessionCount} sessions",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                Text(
+                    text = "${formatNumber(stats.totalRotations)} rotations",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                Text(
+                    text = "${formatNumber(stats.totalMantras)} mantras",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+            }
+        }
+    }
 }

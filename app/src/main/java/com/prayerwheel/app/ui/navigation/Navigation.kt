@@ -18,6 +18,7 @@ import com.prayerwheel.app.ui.wheel.WheelScreen
 import com.prayerwheel.app.ui.wheel.CalculatorScreen
 import com.prayerwheel.app.ui.wheel.CalendarScreen
 import com.prayerwheel.app.ui.wheel.ExportScreen
+import com.prayerwheel.app.ui.wheel.AchievementsScreen
 import com.prayerwheel.app.viewmodel.WheelViewModel
 
 /**
@@ -32,6 +33,7 @@ sealed class Screen(val route: String) {
     data object Calculator : Screen("calculator")
     data object Calendar : Screen("calendar")
     data object Export : Screen("export")
+    data object Achievements : Screen("achievements")
 }
 
 /**
@@ -48,6 +50,7 @@ fun PrayerWheelNavHost(
     modifier: Modifier = Modifier
 ) {
     val hasCompletedOnboarding by userPreferences.hasCompletedOnboarding.collectAsState(initial = false)
+    val savedWheels by userPreferences.savedWheels.collectAsState(initial = emptyList())
     val actualStartDestination = if (hasCompletedOnboarding) Screen.Wheel.route else Screen.Onboarding.route
 
     NavHost(
@@ -86,9 +89,11 @@ fun PrayerWheelNavHost(
         
         composable(Screen.History.route) {
             HistoryScreen(
+                viewModel = viewModel,
                 sessions = sessionDao.getAllSessions(),
                 lifetimeStats = lifetimeStatsDao.observeStats(),
                 sessionDao = sessionDao,
+                savedWheels = savedWheels,
                 onNavigateBack = {
                     navController.popBackStack()
                 },
@@ -119,6 +124,7 @@ fun PrayerWheelNavHost(
         composable(Screen.Stats.route) {
             val lifetimeStats by lifetimeStatsDao.observeStats().collectAsState(initial = null)
             val mantraStats by sessionDao.getMantraStats().collectAsState(initial = emptyList())
+            val wheelStats by sessionDao.getWheelStats().collectAsState(initial = emptyList())
             val sevenDaysAgo = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L)
             val thirtyDaysAgo = System.currentTimeMillis() - (30 * 24 * 60 * 60 * 1000L)
             val last7DaysStats by sessionDao.getStatsSince(sevenDaysAgo).collectAsState(initial = null)
@@ -129,6 +135,8 @@ fun PrayerWheelNavHost(
             StatsScreen(
                 lifetimeStats = lifetimeStats,
                 mantraStats = mantraStats,
+                wheelStats = wheelStats,
+                savedWheels = savedWheels,
                 last7DaysStats = last7DaysStats,
                 last30DaysStats = last30DaysStats,
                 allTimeStats = allTimeStats,
@@ -138,6 +146,9 @@ fun PrayerWheelNavHost(
                 },
                 onNavigateToCalendar = {
                     navController.navigate(Screen.Calendar.route)
+                },
+                onNavigateToAchievements = {
+                    navController.navigate(Screen.Achievements.route)
                 }
             )
         }
@@ -156,7 +167,9 @@ fun PrayerWheelNavHost(
 
         composable(Screen.Calendar.route) {
             CalendarScreen(
+                viewModel = viewModel,
                 sessionDao = sessionDao,
+                savedWheels = savedWheels,
                 onNavigateBack = {
                     navController.popBackStack()
                 }
@@ -166,6 +179,16 @@ fun PrayerWheelNavHost(
         composable(Screen.Export.route) {
             ExportScreen(
                 sessionDao = sessionDao,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(Screen.Achievements.route) {
+            val unlockedSet by userPreferences.unlockedAchievements.collectAsState(initial = emptySet())
+            AchievementsScreen(
+                unlockedAchievements = unlockedSet,
                 onNavigateBack = {
                     navController.popBackStack()
                 }

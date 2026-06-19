@@ -1,5 +1,15 @@
 package com.prayerwheel.app.ui.wheel
 
+import android.Manifest
+import android.app.AlarmManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,8 +46,10 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -47,13 +59,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.prayerwheel.app.data.datastore.SpinMode
+import com.prayerwheel.app.data.datastore.NumberFormatStyle
 import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.data.db.dao.LifetimeStatsDao
 import com.prayerwheel.app.data.db.dao.SessionDao
 import com.prayerwheel.app.data.model.LifetimeStats
+import com.prayerwheel.app.notification.EndOfDayScheduler
+import com.prayerwheel.app.notification.ReminderScheduler
 import com.prayerwheel.app.ui.components.CapacitySlider
 import com.prayerwheel.app.ui.components.NumberFormatter
 import com.prayerwheel.app.viewmodel.WheelViewModel
@@ -62,6 +79,8 @@ import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.math.RoundingMode
+import java.util.Locale
+import kotlin.math.log10
 
 /**
  * Settings screen with all preference groups.
@@ -99,8 +118,23 @@ fun SettingsScreen(
     val customDedication by userPreferences.customDedication.collectAsState(initial = null)
     val sessionTimeGoalSeconds by userPreferences.sessionTimeGoalSeconds.collectAsState(initial = 0L)
     val dailyTimeGoalSeconds by userPreferences.dailyTimeGoalSeconds.collectAsState(initial = 0L)
+    val dailyMantraGoal by userPreferences.dailyMantraGoal.collectAsState(initial = 0L)
     val backgroundVibrationEnabled by userPreferences.backgroundVibrationEnabled.collectAsState(initial = false)
     val vibrationIntensity by userPreferences.vibrationIntensity.collectAsState(initial = 1.0f)
+
+    // Practice Rhythm bindings (reminders, merge threshold, labels, wheel mass)
+    val reminderMorningEnabled by userPreferences.reminderMorningEnabled.collectAsState(initial = false)
+    val reminderMorningHour by userPreferences.reminderMorningHour.collectAsState(initial = 7)
+    val reminderMorningMinute by userPreferences.reminderMorningMinute.collectAsState(initial = 0)
+    val reminderEveningEnabled by userPreferences.reminderEveningEnabled.collectAsState(initial = false)
+    val reminderEveningHour by userPreferences.reminderEveningHour.collectAsState(initial = 19)
+    val reminderEveningMinute by userPreferences.reminderEveningMinute.collectAsState(initial = 0)
+    val reminderEndOfDayEnabled by userPreferences.reminderEndOfDayEnabled.collectAsState(initial = false)
+    val reminderEndOfDayHour by userPreferences.reminderEndOfDayHour.collectAsState(initial = 21)
+    val reminderEndOfDayMinute by userPreferences.reminderEndOfDayMinute.collectAsState(initial = 30)
+    val sessionMergeThresholdMs by userPreferences.sessionMergeThresholdMs.collectAsState(initial = 300000L)
+    val autoLabelSessions by userPreferences.autoLabelSessions.collectAsState(initial = true)
+    val wheelMass by userPreferences.wheelMass.collectAsState(initial = 1.0f)
 
     // Lifetime stats
     val lifetimeStats by lifetimeStatsDao.observeStats().collectAsState(initial = null)
@@ -110,9 +144,23 @@ fun SettingsScreen(
     var interactionExpanded by remember { mutableStateOf(true) }
     var audioExpanded by remember { mutableStateOf(false) }
     var practiceExpanded by remember { mutableStateOf(false) }
+    var practiceRhythmExpanded by remember { mutableStateOf(false) }
     var displayExpanded by remember { mutableStateOf(true) }
     var dataExpanded by remember { mutableStateOf(false) }
     var aboutExpanded by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+
+    var timePickerSlot by remember { mutableStateOf<ReminderSlot?>(null) }
+
+    var showExactAlarmRationale by remember { mutableStateOf(false) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) {
+        // Empty on purpose: permission state is re-checked on the next toggle,
+        // so there is nothing to do with the result here.
+    }
 
     // Reset confirmation dialog
     var showResetDialog by remember { mutableStateOf(false) }
@@ -121,12 +169,34 @@ fun SettingsScreen(
     var showDedicationEditor by remember { mutableStateOf(false) }
     var dedicationEditorText by remember { mutableStateOf(customDedication ?: UserPreferences.DEFAULT_DEDICATION_TEXT) }
 
+    // Selected mantra
+    val selectedMantraId by userPreferences.selectedMantra.collectAsState(initial = "om_mani_padme_hum")
+    val currentMantra = com.prayerwheel.app.data.model.Mantras.byId(selectedMantraId) ?: com.prayerwheel.app.data.model.Mantras.OM_MANI_PADME_HUM
+
     // Dropdown states
     var showThemeDropdown by remember { mutableStateOf(false) }
     var showNumberFormatDropdown by remember { mutableStateOf(false) }
+    var showMantraDropdown by remember { mutableStateOf(false) }
 
     // Spin mode dropdown
     var showSpinModeDropdown by remember { mutableStateOf(false) }
+
+    fun ensureReminderPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            if (!alarmManager.canScheduleExactAlarms()) {
+                showExactAlarmRationale = true
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -166,12 +236,51 @@ fun SettingsScreen(
                 expanded = wheelExpanded,
                 onToggle = { wheelExpanded = !wheelExpanded }
             ) {
-                // Mantra - placeholder for mantra detail
+                // Mantra selector
                 ListItem(
                     headlineContent = { Text("Mantra") },
-                    supportingContent = { Text("Om Mani Padme Hum") },
-                    modifier = Modifier.clickable { /* Navigate to mantra detail */ }
+                    supportingContent = {
+                        Column {
+                            Text(currentMantra.displayName)
+                            currentMantra.tibetan?.let {
+                                Text(
+                                    text = it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.clickable { showMantraDropdown = true }
                 )
+                DropdownMenu(
+                    expanded = showMantraDropdown,
+                    onDismissRequest = { showMantraDropdown = false }
+                ) {
+                    com.prayerwheel.app.data.model.Mantras.ALL.forEach { mantra ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(mantra.displayName)
+                                    mantra.tibetan?.let {
+                                        Text(
+                                            text = it,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                        )
+                                    }
+                                }
+                            },
+                            onClick = {
+                                scope.launch {
+                                    userPreferences.setSelectedMantra(mantra.id)
+                                    viewModel.setSelectedMantra(mantra.id)
+                                }
+                                showMantraDropdown = false
+                            }
+                        )
+                    }
+                }
                 
                 ListItem(
                     headlineContent = { Text("Mantras per Rotation") },
@@ -478,22 +587,6 @@ fun SettingsScreen(
                         .padding(horizontal = 16.dp)
                 )
 
-                ListItem(
-                    headlineContent = { Text("Daily Time Goal") },
-                    supportingContent = { Text(if (dailyTimeGoalSeconds > 0) "${dailyTimeGoalSeconds / 60} minutes" else "None") }
-                )
-                Slider(
-                    value = (dailyTimeGoalSeconds / 60f).coerceIn(0f, 120f),
-                    onValueChange = {
-                        scope.launch { viewModel.setDailyTimeGoal(it.toLong() * 60) }
-                    },
-                    valueRange = 0f..120f,
-                    steps = 119,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                )
-
                 // Milestone notifications
                 ListItem(
                     headlineContent = { Text("Milestone notifications") },
@@ -511,6 +604,187 @@ fun SettingsScreen(
                 ListItem(
                     headlineContent = { Text("Daily reminder") },
                     supportingContent = { Text("Not yet implemented") }
+                )
+            }
+
+            // PRACTICE RHYTHM SECTION
+            SettingsSection(
+                title = "Practice Rhythm",
+                expanded = practiceRhythmExpanded,
+                onToggle = { practiceRhythmExpanded = !practiceRhythmExpanded }
+            ) {
+                // Daily mantra goal
+                ListItem(
+                    headlineContent = { Text("Daily mantra goal") },
+                    supportingContent = {
+                        Text(
+                            if (dailyMantraGoal > 0)
+                                NumberFormatter.formatWithStyle(dailyMantraGoal, NumberFormatStyle.STANDARD)
+                            else "None"
+                        )
+                    }
+                )
+                Slider(
+                    value = dailyMantraGoal.toFloat().coerceIn(0f, 10000f),
+                    onValueChange = {
+                        scope.launch { viewModel.setDailyGoal(it.toLong()) }
+                    },
+                    valueRange = 0f..10000f,
+                    steps = 99,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                )
+
+                // Daily time goal
+                ListItem(
+                    headlineContent = { Text("Daily time goal") },
+                    supportingContent = { Text(if (dailyTimeGoalSeconds > 0) "${dailyTimeGoalSeconds / 60} minutes" else "None") }
+                )
+                Slider(
+                    value = (dailyTimeGoalSeconds / 60f).coerceIn(0f, 120f),
+                    onValueChange = {
+                        scope.launch { viewModel.setDailyTimeGoal(it.toLong() * 60) }
+                    },
+                    valueRange = 0f..120f,
+                    steps = 119,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+
+                // Morning reminder: toggle + tappable time
+                ListItem(
+                    headlineContent = { Text("Morning reminder") },
+                    supportingContent = { Text(formatClockTime(reminderMorningHour, reminderMorningMinute)) },
+                    trailingContent = {
+                        Switch(
+                            checked = reminderMorningEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch { userPreferences.setReminderMorningEnabled(enabled) }
+                                if (enabled) {
+                                    ensureReminderPermissions()
+                                    ReminderScheduler.scheduleMorningReminder(
+                                        context, reminderMorningHour, reminderMorningMinute
+                                    )
+                                } else {
+                                    ReminderScheduler.cancelMorningReminder(context)
+                                }
+                            }
+                        )
+                    },
+                    modifier = Modifier.clickable { timePickerSlot = ReminderSlot.MORNING }
+                )
+
+                // Evening reminder: toggle + tappable time
+                ListItem(
+                    headlineContent = { Text("Evening reminder") },
+                    supportingContent = { Text(formatClockTime(reminderEveningHour, reminderEveningMinute)) },
+                    trailingContent = {
+                        Switch(
+                            checked = reminderEveningEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch { userPreferences.setReminderEveningEnabled(enabled) }
+                                if (enabled) {
+                                    ensureReminderPermissions()
+                                    ReminderScheduler.scheduleEveningReminder(
+                                        context, reminderEveningHour, reminderEveningMinute
+                                    )
+                                } else {
+                                    ReminderScheduler.cancelEveningReminder(context)
+                                }
+                            }
+                        )
+                    },
+                    modifier = Modifier.clickable { timePickerSlot = ReminderSlot.EVENING }
+                )
+
+                // End-of-day summary: toggle + tappable time
+                ListItem(
+                    headlineContent = { Text("End-of-day summary") },
+                    supportingContent = {
+                        Text(
+                            if (reminderEndOfDayEnabled) formatClockTime(reminderEndOfDayHour, reminderEndOfDayMinute)
+                            else "A quiet recap if you practiced today"
+                        )
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = reminderEndOfDayEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch { userPreferences.setReminderEndOfDayEnabled(enabled) }
+                                if (enabled) {
+                                    ensureReminderPermissions()
+                                    EndOfDayScheduler.scheduleEndOfDaySummary(
+                                        context, reminderEndOfDayHour, reminderEndOfDayMinute
+                                    )
+                                } else {
+                                    EndOfDayScheduler.cancelEndOfDaySummary(context)
+                                }
+                            }
+                        )
+                    },
+                    modifier = Modifier.clickable { timePickerSlot = ReminderSlot.END_OF_DAY }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+
+                // Session merge threshold (log scale, 1s..10min)
+                ListItem(
+                    headlineContent = { Text("Session merge threshold") },
+                    supportingContent = { Text(formatMergeThreshold(sessionMergeThresholdMs)) }
+                )
+                Slider(
+                    value = thresholdMsToSlider(sessionMergeThresholdMs),
+                    onValueChange = { sliderPos ->
+                        scope.launch {
+                            userPreferences.setSessionMergeThresholdMs(sliderToThresholdMs(sliderPos))
+                        }
+                    },
+                    valueRange = 0f..1f,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                )
+                Text(
+                    text = "How long after a session ends before a new spin counts as a new session.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+
+                // Auto-label sessions toggle
+                ListItem(
+                    headlineContent = { Text("Auto-label sessions") },
+                    supportingContent = { Text("Suggest morning / evening labels for new sessions") },
+                    trailingContent = {
+                        Switch(
+                            checked = autoLabelSessions,
+                            onCheckedChange = {
+                                scope.launch { userPreferences.setAutoLabelSessions(it) }
+                            }
+                        )
+                    }
+                )
+
+                // Wheel mass (physics feel): 0.5..3.0
+                ListItem(
+                    headlineContent = { Text("Wheel mass") },
+                    supportingContent = { Text(String.format(Locale.getDefault(), "%.1f", wheelMass)) }
+                )
+                Slider(
+                    value = wheelMass,
+                    onValueChange = {
+                        scope.launch { userPreferences.setWheelMass(it) }
+                    },
+                    valueRange = 0.5f..3.0f,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
                 )
             }
 
@@ -659,7 +933,7 @@ fun SettingsScreen(
                                 val avgRpm = stats.totalRotations.toFloat() / (stats.totalSpinningTimeSeconds.toFloat() / 60f)
                                 StatRow(
                                     label = "Lifetime Average RPM",
-                                    value = String.format("%.1f", avgRpm)
+                                    value = String.format(Locale.getDefault(), "%.1f", avgRpm)
                                 )
                             }
                             stats.firstSessionAt?.let { firstMs ->
@@ -668,7 +942,7 @@ fun SettingsScreen(
                                     StatRow(
                                         label = "Practicing For",
                                         value = if (daysSinceStart >= 365) {
-                                            String.format("%d days (%.1f years)", daysSinceStart, daysSinceStart / 365.25)
+                                            String.format(Locale.getDefault(), "%d days (%.1f years)", daysSinceStart, daysSinceStart / 365.25)
                                         } else {
                                             "$daysSinceStart days"
                                         }
@@ -807,6 +1081,117 @@ fun SettingsScreen(
                 }
             )
         }
+
+        // Reminder TimePicker dialog
+        timePickerSlot?.let { slot ->
+            val initialHour = when (slot) {
+                ReminderSlot.MORNING -> reminderMorningHour
+                ReminderSlot.EVENING -> reminderEveningHour
+                ReminderSlot.END_OF_DAY -> reminderEndOfDayHour
+            }
+            val initialMinute = when (slot) {
+                ReminderSlot.MORNING -> reminderMorningMinute
+                ReminderSlot.EVENING -> reminderEveningMinute
+                ReminderSlot.END_OF_DAY -> reminderEndOfDayMinute
+            }
+            val timePickerState = rememberTimePickerState(
+                initialHour = initialHour,
+                initialMinute = initialMinute,
+                is24Hour = false
+            )
+            AlertDialog(
+                onDismissRequest = { timePickerSlot = null },
+                title = {
+                    Text(
+                        when (slot) {
+                            ReminderSlot.MORNING -> "Morning reminder time"
+                            ReminderSlot.EVENING -> "Evening reminder time"
+                            ReminderSlot.END_OF_DAY -> "End-of-day summary time"
+                        }
+                    )
+                },
+                text = { TimePicker(state = timePickerState) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                when (slot) {
+                                    ReminderSlot.MORNING -> {
+                                        userPreferences.setReminderMorningHour(timePickerState.hour)
+                                        userPreferences.setReminderMorningMinute(timePickerState.minute)
+                                    }
+                                    ReminderSlot.EVENING -> {
+                                        userPreferences.setReminderEveningHour(timePickerState.hour)
+                                        userPreferences.setReminderEveningMinute(timePickerState.minute)
+                                    }
+                                    ReminderSlot.END_OF_DAY -> {
+                                        userPreferences.setReminderEndOfDayHour(timePickerState.hour)
+                                        userPreferences.setReminderEndOfDayMinute(timePickerState.minute)
+                                    }
+                                }
+                            }
+                            when (slot) {
+                                ReminderSlot.MORNING -> {
+                                    if (reminderMorningEnabled) {
+                                        ReminderScheduler.scheduleMorningReminder(
+                                            context, timePickerState.hour, timePickerState.minute
+                                        )
+                                    }
+                                }
+                                ReminderSlot.EVENING -> {
+                                    if (reminderEveningEnabled) {
+                                        ReminderScheduler.scheduleEveningReminder(
+                                            context, timePickerState.hour, timePickerState.minute
+                                        )
+                                    }
+                                }
+                                ReminderSlot.END_OF_DAY -> {
+                                    if (reminderEndOfDayEnabled) {
+                                        EndOfDayScheduler.scheduleEndOfDaySummary(
+                                            context, timePickerState.hour, timePickerState.minute
+                                        )
+                                    }
+                                }
+                            }
+                            timePickerSlot = null
+                        }
+                    ) { Text("Set") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { timePickerSlot = null }) { Text("Cancel") }
+                }
+            )
+        }
+
+        // Exact-alarm permission rationale dialog (API 31+)
+        if (showExactAlarmRationale) {
+            AlertDialog(
+                onDismissRequest = { showExactAlarmRationale = false },
+                title = { Text("Exact alarm permission") },
+                text = {
+                    Text(
+                        "To fire practice reminders at the precise time you choose, " +
+                            "allow this app to schedule exact alarms in Android settings. " +
+                            "Without it, reminders may be delayed by several minutes."
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showExactAlarmRationale = false
+                            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            runCatching { context.startActivity(intent) }
+                        }
+                    ) { Text("Open settings") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showExactAlarmRationale = false }) { Text("Not now") }
+                }
+            )
+        }
     }
 }
 
@@ -838,20 +1223,54 @@ private fun formatDuration(seconds: Long): String {
         seconds >= 86400 -> {
             val days = seconds / 86400
             val hrs = (seconds % 86400) / 3600
-            if (hrs > 0) String.format("%dd %dh", days, hrs) else "${days}d"
+            if (hrs > 0) String.format(Locale.getDefault(), "%dd %dh", days, hrs) else "${days}d"
         }
         seconds >= 3600 -> {
             val hrs = seconds / 3600
             val mins = (seconds % 3600) / 60
-            if (mins > 0) String.format("%dh %dm", hrs, mins) else "${hrs}h"
+            if (mins > 0) String.format(Locale.getDefault(), "%dh %dm", hrs, mins) else "${hrs}h"
         }
         seconds >= 60 -> {
             val mins = seconds / 60
             val secs = seconds % 60
-            if (secs > 0) String.format("%dm %ds", mins, secs) else "${mins}m"
+            if (secs > 0) String.format(Locale.getDefault(), "%dm %ds", mins, secs) else "${mins}m"
         }
         else -> "${seconds}s"
     }
+}
+
+private enum class ReminderSlot { MORNING, EVENING, END_OF_DAY }
+
+private fun formatClockTime(hour: Int, minute: Int): String {
+    val amPm = if (hour < 12) "AM" else "PM"
+    val displayHour = when {
+        hour == 0 -> 12
+        hour > 12 -> hour - 12
+        else -> hour
+    }
+    return String.format(Locale.getDefault(), "%d:%02d %s", displayHour, minute, amPm)
+}
+
+private fun formatMergeThreshold(ms: Long): String {
+    val seconds = (ms / 1000).coerceAtLeast(1L)
+    return formatDuration(seconds)
+}
+
+private val MERGE_THRESHOLD_MIN_MS = 1_000L
+private val MERGE_THRESHOLD_MAX_MS = 600_000L
+
+private fun thresholdMsToSlider(ms: Long): Float {
+    val lMin = log10(MERGE_THRESHOLD_MIN_MS.toDouble())
+    val lMax = log10(MERGE_THRESHOLD_MAX_MS.toDouble())
+    val lVal = log10(ms.coerceIn(MERGE_THRESHOLD_MIN_MS, MERGE_THRESHOLD_MAX_MS).toDouble())
+    return ((lVal - lMin) / (lMax - lMin)).toFloat()
+}
+
+private fun sliderToThresholdMs(sliderPos: Float): Long {
+    val lMin = log10(MERGE_THRESHOLD_MIN_MS.toDouble())
+    val lMax = log10(MERGE_THRESHOLD_MAX_MS.toDouble())
+    val lVal = lMin + sliderPos.coerceIn(0f, 1f) * (lMax - lMin)
+    return Math.pow(10.0, lVal).toLong()
 }
 
 /**

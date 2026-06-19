@@ -8,12 +8,19 @@ import androidx.compose.ui.unit.sp
 
 /**
  * Tibetan font family for displaying Tibetan script.
- * Uses Serif as fallback when Jomolhari font is not available.
- * To add Jomolhari font: download jomolhari.ttf and place in res/font/ directory,
- * then change TibetanFallback to use FontFamily("jomolhari", fallback = FontFamily.Serif)
+ *
+ * Currently uses system Serif (which on modern Android includes Noto Sans Tibetan).
+ *
+ * To bundle a custom Tibetan font for guaranteed correct rendering on all devices:
+ * 1. Download NotoSansTibetan-Regular.ttf from https://fonts.google.com/noto/specimen/Noto+Sans+Tibetan
+ * 2. Place it in app/src/main/res/font/noto_sans_tibetan.ttf
+ * 3. Change this definition to:
+ *      val TibetanFont = FontFamily(Font(R.font.noto_sans_tibetan))
+ * 4. Add import androidx.compose.ui.text.font.Font to this file
+ *
+ * The res/font/noto_sans_tibetan.xml file documents this setup.
  */
-val TibetanFont = FontFamily.Serif  // Placeholder - will use custom font when available
-val TibetanFallback = FontFamily.Serif
+val TibetanFont = FontFamily.Serif
 
 val Typography = Typography(
     displayLarge = TextStyle(

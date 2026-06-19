@@ -1,7 +1,9 @@
 package com.prayerwheel.app.ui.wheel
 
-import android.content.Context
-import android.content.Intent
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,20 +16,34 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -37,21 +53,30 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.clip
+
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.prayerwheel.app.data.datastore.SpinMode
+import com.prayerwheel.app.ui.components.bounceClick
 import com.prayerwheel.app.data.db.dao.SessionDao
 import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.data.model.Mantras
+import com.prayerwheel.app.data.model.SavedWheel
 import com.prayerwheel.app.data.model.Session
+import com.prayerwheel.app.ui.components.LogPracticeDialog
 import com.prayerwheel.app.ui.components.NumberFormatter
-import java.io.OutputStreamWriter
+import com.prayerwheel.app.ui.theme.StarGold
+import com.prayerwheel.app.ui.theme.StarLightBlue
+import kotlinx.coroutines.launch
+
 import java.math.BigInteger
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -70,9 +95,11 @@ enum class TimeFilter {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun HistoryScreen(
+    viewModel: com.prayerwheel.app.viewmodel.WheelViewModel,
     sessions: kotlinx.coroutines.flow.Flow<List<Session>>,
     lifetimeStats: kotlinx.coroutines.flow.Flow<LifetimeStats?>,
     sessionDao: SessionDao,
+    savedWheels: List<SavedWheel>,
     onNavigateBack: () -> Unit,
     onNavigateToStats: () -> Unit,
     onNavigateToExport: () -> Unit,
@@ -80,16 +107,28 @@ fun HistoryScreen(
 ) {
     val sessionsList by sessions.collectAsState(initial = emptyList())
     val stats by lifetimeStats.collectAsState(initial = null)
-    val context = LocalContext.current
+    var showLogDialog by remember { mutableStateOf(false) }
+    var sessionToDelete by remember { mutableStateOf<Session?>(null) }
+    var lastDeletedSession by remember { mutableStateOf<Session?>(null) }
+    val defaultRpm by viewModel.autoSpinRpm.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     // Filter states
+    var isFiltersExpanded by remember { mutableStateOf(false) }
     var selectedMantraFilter by remember { mutableStateOf<String?>(null) }
+    var selectedWheelFilter by remember { mutableStateOf<String?>(null) }
     var selectedTimeFilter by remember { mutableStateOf(TimeFilter.ALL_TIME) }
     var selectedModeFilter by remember { mutableStateOf<SpinMode?>(null) }
 
-    // Available mantras for filter chips
+    // Available mantras and wheels for filter chips
     val availableMantras = remember(sessionsList) {
         sessionsList.map { it.mantraId }.distinct().mapNotNull { Mantras.byId(it) }
+    }
+    val availableWheels = remember(sessionsList, savedWheels) {
+        sessionsList.mapNotNull { it.wheelId }.distinct().mapNotNull { id ->
+            savedWheels.find { it.id == id } ?: SavedWheel(id, "Deleted Wheel", 1L, "", "", 0L)
+        }
     }
 
     // Calculate time-based thresholds
@@ -106,6 +145,7 @@ fun HistoryScreen(
         val currentMode = selectedModeFilter
         sessionsList.filter { session ->
             val matchesMantra = selectedMantraFilter == null || session.mantraId == selectedMantraFilter
+            val matchesWheel = selectedWheelFilter == null || session.wheelId == selectedWheelFilter
             val matchesTime = when (selectedTimeFilter) {
                 TimeFilter.TODAY -> session.startedAt >= todayStart
                 TimeFilter.LAST_7_DAYS -> session.startedAt >= sevenDaysAgo
@@ -113,7 +153,7 @@ fun HistoryScreen(
                 TimeFilter.ALL_TIME -> true
             }
             val matchesMode = currentMode == null || session.mode == currentMode.name
-            matchesMantra && matchesTime && matchesMode
+            matchesMantra && matchesWheel && matchesTime && matchesMode
         }
     }
 
@@ -132,6 +172,7 @@ fun HistoryScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -167,6 +208,20 @@ fun HistoryScreen(
                 )
             )
         },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showLogDialog = true },
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.bounceClick()
+            ) {
+                Text(
+                    text = "🪷+",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+            }
+        },
         modifier = modifier
     ) { paddingValues ->
         LazyColumn(
@@ -189,13 +244,37 @@ fun HistoryScreen(
                 )
             }
 
+            // Filters Header
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bounceClick()
+                        .clickable { isFiltersExpanded = !isFiltersExpanded }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Filters",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Icon(
+                        imageVector = if (isFiltersExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Toggle Filters"
+                    )
+                }
+            }
+
             // Filter chips
             item {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // Time filter
+                AnimatedVisibility(visible = isFiltersExpanded) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Time filter
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -239,6 +318,27 @@ fun HistoryScreen(
                         }
                     }
 
+                    // Wheel filter
+                    if (availableWheels.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            FilterChip(
+                                selected = selectedWheelFilter == null,
+                                onClick = { selectedWheelFilter = null },
+                                label = { Text("All Wheels") }
+                            )
+                            availableWheels.forEach { wheel ->
+                                FilterChip(
+                                    selected = selectedWheelFilter == wheel.id,
+                                    onClick = { selectedWheelFilter = wheel.id },
+                                    label = { Text(wheel.name) }
+                                )
+                            }
+                        }
+                    }
+
                     // Mode filter
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -260,11 +360,12 @@ fun HistoryScreen(
                                 }
                             )
                         }
+                        }
                     }
                 }
             }
 
-            // Lifetime stats summary card
+        // Lifetime stats summary card
             item {
                 LifetimeStatsCard(stats = stats)
             }
@@ -286,23 +387,41 @@ fun HistoryScreen(
             // Empty state or sessions list
             if (filteredSessions.isEmpty()) {
                 item {
-                    Box(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 48.dp),
-                        contentAlignment = Alignment.Center
+                            .padding(vertical = 64.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
+                        Text(
+                            text = "🪷",
+                            fontSize = 48.sp,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                        Text(
+                            text = "The wheel is at rest.",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
+                        )
                         Text(
                             text = "No practice sessions match your filters.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(top = 8.dp)
                         )
                     }
                 }
             } else {
                 items(filteredSessions) { session ->
-                    SessionCard(session = session)
+                    SessionCard(
+                        session = session,
+                        savedWheels = savedWheels,
+                        onDeleteClick = { sessionToDelete = session },
+                        onLabelChange = { newLabel ->
+                            viewModel.updateSessionLabel(session, newLabel)
+                        }
+                    )
                 }
             }
 
@@ -310,6 +429,69 @@ fun HistoryScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+    }
+
+    if (showLogDialog) {
+        LogPracticeDialog(
+            savedWheels = savedWheels,
+            defaultRpm = defaultRpm,
+            onSave = { wheelId, startedAt, durationSeconds, rotations, mantraId, capacity, intention, dedication ->
+                viewModel.logManualSession(wheelId, startedAt, durationSeconds, rotations, mantraId, capacity, intention, dedication)
+                showLogDialog = false
+            },
+            onDismiss = { showLogDialog = false }
+        )
+    }
+
+    if (sessionToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { sessionToDelete = null },
+            title = { Text("Delete Practice Session?") },
+            text = {
+                val session = sessionToDelete!!
+                val wheelName = session.wheelId?.let { id -> savedWheels.find { it.id == id }?.name ?: "Deleted Wheel" } ?: "Unspecified Wheel"
+                val durationStr = calculateDuration(session.startedAt, session.endedAt ?: session.startedAt)
+                Text(
+                    "Are you sure you want to delete this session?\n\n" +
+                    "• Wheel: $wheelName\n" +
+                    "• Date: ${formatDate(session.startedAt)}\n" +
+                    "• Duration: $durationStr\n" +
+                    "• Mantras: ${NumberFormatter.format(session.totalMantras)}\n\n" +
+                    "This will subtract the merit and duration from your lifetime statistics. You can undo this briefly after deletion."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val deleted = sessionToDelete
+                        sessionToDelete = null
+                        deleted?.let { session ->
+                            viewModel.deleteSession(session)
+                            lastDeletedSession = session
+                            coroutineScope.launch {
+                                val result = snackbarHostState.showSnackbar(
+                                    message = "Session deleted",
+                                    actionLabel = "Undo",
+                                    duration = SnackbarDuration.Short
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    lastDeletedSession?.let { viewModel.undoDeleteSession(it) }
+                                }
+                                lastDeletedSession = null
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { sessionToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -476,10 +658,16 @@ private fun StatItem(label: String, value: String) {
  * Enhanced session card showing detailed session information.
  */
 @Composable
-private fun SessionCard(session: Session) {
+private fun SessionCard(
+    session: Session,
+    savedWheels: List<SavedWheel> = emptyList(),
+    onDeleteClick: () -> Unit,
+    onLabelChange: (String?) -> Unit
+) {
     val mantra = Mantras.byId(session.mantraId)
     val displayName = mantra?.displayName ?: session.mantraId
     val tibetan = mantra?.tibetan
+    val wheelName = session.wheelId?.let { id -> savedWheels.find { it.id == id }?.name ?: "Deleted Wheel" }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -493,26 +681,47 @@ private fun SessionCard(session: Session) {
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Date and duration row
+            // Date, label chip, and duration row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = formatDateTime(session.startedAt),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                
-                session.endedAt?.let { endedAt ->
-                    val duration = calculateDuration(session.startedAt, endedAt)
-                    if (duration.isNotEmpty()) {
-                        Text(
-                            text = duration,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = formatDateTime(session.startedAt),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    LabelChipWithEditor(
+                        label = session.label,
+                        onChange = onLabelChange
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    session.endedAt?.let { endedAt ->
+                        val duration = calculateDuration(session.startedAt, endedAt)
+                        if (duration.isNotEmpty()) {
+                            Text(
+                                text = duration,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                    }
+                    IconButton(
+                        onClick = onDeleteClick,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete session",
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.6f),
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -584,7 +793,7 @@ private fun SessionCard(session: Session) {
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Mode row
+            // Mode and Wheel row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -594,6 +803,13 @@ private fun SessionCard(session: Session) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 )
+                if (wheelName != null) {
+                    Text(
+                        text = "Wheel: $wheelName",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                }
             }
 
             // Intention (if set)
@@ -625,38 +841,6 @@ private fun SessionCard(session: Session) {
                 }
             }
         }
-    }
-}
-
-/**
- * Exports filtered sessions to CSV format and shares via Android share sheet.
- */
-private fun exportSessionsToCsv(context: Context, sessions: List<Session>) {
-    try {
-        val csvContent = buildString {
-            // Header
-            appendLine("Date,Duration,Mantra,Rotations,Mantras,Avg RPM,Peak RPM,Mode,Intention,Dedication")
-            
-            // Data rows
-            sessions.forEach { session ->
-                val mantra = Mantras.byId(session.mantraId)
-                val displayName = mantra?.displayName ?: session.mantraId
-                val duration = session.endedAt?.let { calculateDuration(session.startedAt, it) } ?: ""
-                val intention = session.intention?.replace("\"", "\"\"") ?: ""
-                val dedication = session.dedication?.replace("\"", "\"\"") ?: ""
-                
-                appendLine("\"${formatDateTime(session.startedAt)}\",\"$duration\",\"$displayName\",${session.rotationCount},${session.totalMantras},${session.averageRpm},${session.peakRpm},\"${formatSpinMode(session.mode)}\",\"$intention\",\"$dedication\"")
-            }
-        }
-        
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/csv"
-            putExtra(Intent.EXTRA_SUBJECT, "Prayer Wheel Practice History")
-            putExtra(Intent.EXTRA_TEXT, csvContent)
-        }
-        context.startActivity(Intent.createChooser(intent, "Export Sessions"))
-    } catch (e: Exception) {
-        // Handle export error silently
     }
 }
 
@@ -721,4 +905,146 @@ private fun formatSpinMode(mode: String): String {
     } catch (e: IllegalArgumentException) {
         mode
     }
+}
+
+@Composable
+private fun LabelChipWithEditor(
+    label: String?,
+    onChange: (String?) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    var showCustomDialog by remember { mutableStateOf(false) }
+
+    Box(modifier = modifier) {
+        LabelChip(
+            label = label,
+            onClick = { menuExpanded = true }
+        )
+        DropdownMenu(
+            expanded = menuExpanded,
+            onDismissRequest = { menuExpanded = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text("Morning") },
+                onClick = {
+                    menuExpanded = false
+                    onChange("morning")
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Evening") },
+                onClick = {
+                    menuExpanded = false
+                    onChange("evening")
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Custom…") },
+                onClick = {
+                    menuExpanded = false
+                    showCustomDialog = true
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("None") },
+                onClick = {
+                    menuExpanded = false
+                    onChange(null)
+                }
+            )
+        }
+    }
+
+    if (showCustomDialog) {
+        val isPreset = label.equals("morning", ignoreCase = true) ||
+            label.equals("evening", ignoreCase = true)
+        LabelCustomDialog(
+            initialText = if (label != null && !isPreset) label else "",
+            onConfirm = { text ->
+                onChange(text.ifBlank { null })
+                showCustomDialog = false
+            },
+            onDismiss = { showCustomDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun LabelChip(
+    label: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val normalized = label?.lowercase(Locale.getDefault())
+    val (bgAlpha, fgColor, text) = when (normalized) {
+        "morning" -> Triple(0.45f, MaterialTheme.colorScheme.onSurface, "Morning")
+        "evening" -> Triple(0.5f, MaterialTheme.colorScheme.onSurface, "Evening")
+        null -> Triple(
+            0.4f,
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            "—"
+        )
+        else -> Triple(
+            0.5f,
+            MaterialTheme.colorScheme.onSurface,
+            label
+        )
+    }
+
+    val backgroundColor = when (normalized) {
+        "morning" -> StarLightBlue
+        "evening" -> StarGold
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .background(backgroundColor.copy(alpha = bgAlpha))
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = fgColor,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun LabelCustomDialog(
+    initialText: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var text by remember { mutableStateOf(initialText) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Custom Label") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                placeholder = { Text("e.g., Lunch break") },
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text.trim()) }) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
