@@ -92,7 +92,76 @@ object WheelSkins {
         rayColor = 0xFF6A6A6A         // Gray rays
     )
 
-    val ALL = listOf(TRADITIONAL_GOLD, SILVER, COPPER, IVORY, JADE, OBSIDIAN)
+    val SANDALWOOD = WheelSkin(
+        id = "sandalwood",
+        name = "Sandalwood",
+        cylinderColor = 0xFF8C6239,  // Warm sandalwood brown
+        capColor = 0xFFA67C52,       // Light wood
+        stemColor = 0xFF5C3A21,      // Dark wood
+        crystalColor = 0xFFFFD700,    // Golden crystal
+        weightColor = 0xFF704214,     // Dark bead
+        rayColor = 0xFFD2B48C        // Sandalwood tan rays
+    )
+
+    val LAPIS_LAZULI = WheelSkin(
+        id = "lapis_lazuli",
+        name = "Lapis Lazuli",
+        cylinderColor = 0xFF264395,  // Deep lapis blue
+        capColor = 0xFF4A68B0,       // Medium lapis
+        stemColor = 0xFF1B2A4A,      // Dark blue-black handle
+        crystalColor = 0xFFE0E0E0,    // White quartz crystal
+        weightColor = 0xFF5072A7,     // Lapis bead
+        rayColor = 0xFF3F51B5        // Blue rays
+    )
+
+    val TURQUOISE = WheelSkin(
+        id = "turquoise",
+        name = "Turquoise",
+        cylinderColor = 0xFF30D5C8,  // Turquoise teal
+        capColor = 0xFF4DEEEA,       // Bright teal
+        stemColor = 0xFF2F4F4F,      // Slate handle
+        crystalColor = 0xFFE0F7FA,    // Cyan crystal
+        weightColor = 0xFF00ACC1,     // Teal bead
+        rayColor = 0xFF00E5FF        // Teal rays
+    )
+
+    val RUBY = WheelSkin(
+        id = "ruby",
+        name = "Ruby",
+        cylinderColor = 0xFFE0115F,  // Deep ruby red
+        capColor = 0xFFFF4081,       // Ruby rose
+        stemColor = 0xFF4A0E17,      // Crimson handle
+        crystalColor = 0xFFFFD700,    // Golden finial
+        weightColor = 0xFFC2185B,     // Red bead
+        rayColor = 0xFFFF2A6D        // Ruby rays
+    )
+
+    val AMETHYST = WheelSkin(
+        id = "amethyst",
+        name = "Amethyst",
+        cylinderColor = 0xFF9966CC,  // Amethyst purple
+        capColor = 0xFFBA55D3,       // Violet cap
+        stemColor = 0xFF483D8B,      // Dark slate purple
+        crystalColor = 0xFFE8D7F1,    // Light lavender crystal
+        weightColor = 0xFF8A2BE2,     // Purple bead
+        rayColor = 0xFFD8BFD8        // Purple rays
+    )
+
+    val RAINBOW = WheelSkin(
+        id = "rainbow",
+        name = "Rainbow",
+        cylinderColor = 0xFFFF007F,  // Pink/magenta base
+        capColor = 0xFF9400D3,       // Violet cap
+        stemColor = 0xFF00FF00,      // Green handle
+        crystalColor = 0xFF00FFFF,    // Cyan crystal
+        weightColor = 0xFFFFFF00,     // Yellow bead
+        rayColor = 0xFFFF8C00        // Orange rays
+    )
+
+    val ALL = listOf(
+        TRADITIONAL_GOLD, SILVER, COPPER, IVORY, JADE, OBSIDIAN,
+        SANDALWOOD, LAPIS_LAZULI, TURQUOISE, RUBY, AMETHYST, RAINBOW
+    )
 
     fun byId(id: String): WheelSkin? = ALL.find { it.id == id }
 

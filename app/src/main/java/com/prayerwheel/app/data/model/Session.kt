@@ -27,5 +27,7 @@ data class Session(
     @ColumnInfo(name = "peak_rpm") val peakRpm: Float = 0f,
     @ColumnInfo(name = "total_spins") val totalSpins: Long = 0L,
     @ColumnInfo(name = "intention") val intention: String? = null,
-    @ColumnInfo(name = "session_goal") val sessionGoal: Long? = null
+    @ColumnInfo(name = "session_goal") val sessionGoal: Long? = null,
+    @ColumnInfo(name = "wheel_id") val wheelId: String? = null,
+    @ColumnInfo(name = "label") val label: String? = null
 )

@@ -8,6 +8,9 @@ import com.prayerwheel.app.data.db.dao.SessionDao
 import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.data.model.Session
 
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+
 /**
  * Room database for the Prayer Wheel Counter application.
  *
@@ -19,11 +22,19 @@ import com.prayerwheel.app.data.model.Session
         Session::class,
         LifetimeStats::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
     abstract fun lifetimeStatsDao(): LifetimeStatsDao
+
+    companion object {
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN wheel_id TEXT DEFAULT NULL")
+            }
+        }
+    }
 }
