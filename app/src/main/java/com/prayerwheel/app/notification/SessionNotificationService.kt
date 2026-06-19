@@ -37,12 +37,15 @@ class SessionNotificationService : Service() {
 
     // ── Coroutine scope & timer job ──────────────────────────────────────────
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var timerJob: Job? = null
+    @Volatile private var timerJob: Job? = null
 
     // ── Session state (also mirrored in companion for stateless updates) ─────
-    private var sessionDurationSeconds: Long = 0L
-    private var mantraCountRaw: BigInteger = BigInteger.ZERO
-    private var isPaused: Boolean = false
+    // @Volatile: these are written from the static companion update() (caller's
+    // thread, e.g. the ViewModel) and read from the service's Dispatchers.Main
+    // timer loop — visibility across threads must be guaranteed.
+    @Volatile private var sessionDurationSeconds: Long = 0L
+    @Volatile private var mantraCountRaw: BigInteger = BigInteger.ZERO
+    @Volatile private var isPaused: Boolean = false
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
     override fun onCreate() {

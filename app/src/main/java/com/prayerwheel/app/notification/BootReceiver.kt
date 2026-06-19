@@ -22,12 +22,24 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         if (context == null || intent == null) return
 
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            runCatching { rescheduleReminders(context) }
-                .onFailure { e ->
-                    Log.e(TAG, "Failed to reschedule reminders on boot", e)
-                }
-        }
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+
+        // ReminderScheduler.rescheduleAllFromPreferences reads from DataStore
+        // via runBlocking. On first boot after install there is no in-memory
+        // cache, so the synchronous file read on the main thread could ANR.
+        // Move the work off the main thread via goAsync(); the system keeps
+        // the broadcast alive (~10s budget) until finish() is called.
+        val pendingResult = goAsync()
+        Thread {
+            try {
+                runCatching { rescheduleReminders(context) }
+                    .onFailure { e ->
+                        Log.e(TAG, "Failed to reschedule reminders on boot", e)
+                    }
+            } finally {
+                pendingResult.finish()
+            }
+        }.start()
     }
 
     /**

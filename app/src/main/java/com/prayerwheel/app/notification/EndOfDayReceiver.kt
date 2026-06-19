@@ -41,30 +41,43 @@ class EndOfDayReceiver : BroadcastReceiver() {
         if (context == null || intent == null) return
         val action = intent.action ?: return
 
-        when (action) {
-            Intent.ACTION_BOOT_COMPLETED -> {
-                runCatching {
-                    EndOfDayScheduler.rescheduleFromPreferences(context)
-                }.onFailure { e ->
-                    Log.e(TAG, "Failed to reschedule end-of-day alarm on boot", e)
-                }
-            }
+        // Both branches below read from DataStore via runBlocking (boot path
+        // via rescheduleFromPreferences; summary path via handleEndOfDaySummary's
+        // session/Flow reads). On first boot after install there is no
+        // in-memory cache, so a synchronous read on the main thread risks an
+        // ANR. Move the entire body off main via goAsync(); the system keeps
+        // the broadcast alive (~10s budget) until finish() is called.
+        val pendingResult = goAsync()
+        Thread {
+            try {
+                when (action) {
+                    Intent.ACTION_BOOT_COMPLETED -> {
+                        runCatching {
+                            EndOfDayScheduler.rescheduleFromPreferences(context)
+                        }.onFailure { e ->
+                            Log.e(TAG, "Failed to reschedule end-of-day alarm on boot", e)
+                        }
+                    }
 
-            EndOfDayScheduler.ACTION_END_OF_DAY_SUMMARY -> {
-                runCatching {
-                    handleEndOfDaySummary(context)
-                }.onFailure { e ->
-                    Log.e(TAG, "Failed to handle end-of-day summary", e)
+                    EndOfDayScheduler.ACTION_END_OF_DAY_SUMMARY -> {
+                        runCatching {
+                            handleEndOfDaySummary(context)
+                        }.onFailure { e ->
+                            Log.e(TAG, "Failed to handle end-of-day summary", e)
+                        }
+                        // Always re-arm tomorrow, even if this fire failed or the user
+                        // did not practice, so the reminder never silently disappears.
+                        runCatching {
+                            EndOfDayScheduler.rescheduleFromPreferences(context)
+                        }.onFailure { e ->
+                            Log.e(TAG, "Failed to reschedule next end-of-day alarm", e)
+                        }
+                    }
                 }
-                // Always re-arm tomorrow, even if this fire failed or the user
-                // did not practice, so the reminder never silently disappears.
-                runCatching {
-                    EndOfDayScheduler.rescheduleFromPreferences(context)
-                }.onFailure { e ->
-                    Log.e(TAG, "Failed to reschedule next end-of-day alarm", e)
-                }
+            } finally {
+                pendingResult.finish()
             }
-        }
+        }.start()
     }
 
     /**
