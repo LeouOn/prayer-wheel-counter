@@ -154,6 +154,13 @@ fun CalculatorScreen(
                 }
             }
 
+            Text(
+                text = "The prayer wheel accompanies recitation — it does not stand in for it. Spinning while reciting is the traditional form of this practice.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+
             when (selectedTab) {
                 CalculatorTab.PERSONAL -> PersonalCalculator(
                     defaultRpm = defaultRpm,
@@ -178,16 +185,19 @@ private fun PersonalCalculator(
     var mantrasPerRotation by remember { mutableStateOf(defaultMantrasPerRotation.coerceAtLeast(1L)) }
     var hoursPerDay by remember { mutableFloatStateOf(2f) }
     var daysPerWeek by remember { mutableIntStateOf(7) }
+    var personalRecitationRate by remember { mutableIntStateOf(100) }
     var selectedPeriod by remember { mutableStateOf(ProjectionPeriod.ONE_YEAR) }
 
     val mantrasPerMinute = remember(rpm, mantrasPerRotation) {
-        BigInteger.valueOf((rpm.toLong() * mantrasPerRotation))
+        BigInteger.valueOf(rpm.toLong()).multiply(BigInteger.valueOf(mantrasPerRotation))
     }
     val mantrasPerHour = remember(mantrasPerMinute) {
         mantrasPerMinute * BigInteger.valueOf(60)
     }
     val mantrasPerDay = remember(mantrasPerHour, hoursPerDay) {
-        mantrasPerHour * BigInteger.valueOf(hoursPerDay.toLong())
+        mantrasPerHour.toBigDecimal()
+            .multiply(BigDecimal.valueOf(hoursPerDay.toDouble()))
+            .toBigInteger()
     }
     val mantrasPerWeek = remember(mantrasPerDay, daysPerWeek) {
         mantrasPerDay * BigInteger.valueOf(daysPerWeek.toLong())
@@ -325,6 +335,27 @@ private fun PersonalCalculator(
                 }
 
                 Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text = "Verbal recitation while spinning", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "$personalRecitationRate mantras/min",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Slider(
+                        value = personalRecitationRate.toFloat(),
+                        onValueChange = { personalRecitationRate = it.toInt().coerceIn(0, 300) },
+                        valueRange = 0f..300f,
+                        steps = 59,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Column {
                     Text(text = "Projection Period", style = MaterialTheme.typography.bodyMedium)
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -407,6 +438,59 @@ private fun PersonalCalculator(
                 StatRow(label = "Per week", value = "${NumberFormatter.format(mantrasPerWeek)} (${NumberFormatter.formatWithCommas(mantrasPerWeek)})")
                 StatRow(label = "Per month", value = "${NumberFormatter.format(mantrasPerMonth)} (${NumberFormatter.formatWithCommas(mantrasPerMonth)})")
                 StatRow(label = "Per year", value = "${NumberFormatter.format(mantrasPerYear)} (${NumberFormatter.formatWithCommas(mantrasPerYear)})")
+            }
+        }
+
+        // ===== Dual Practice card =====
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Dual Practice: Wheel + Recitation",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "Traditional Tibetan practice combines wheel and verbal recitation — body, speech, and mind together. The wheel amplifies practice; it does not replace the voice.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                HorizontalDivider()
+
+                val verbalMantrasPerHour = BigInteger.valueOf(personalRecitationRate.toLong() * 60L)
+                val verbalMantrasPerDay = verbalMantrasPerHour.toBigDecimal()
+                    .multiply(BigDecimal.valueOf(hoursPerDay.toDouble()))
+                    .toBigInteger()
+                val verbalMantrasPerYear = verbalMantrasPerDay * BigInteger.valueOf(365)
+                val combinedPerHour = mantrasPerHour + verbalMantrasPerHour
+                val combinedPerYear = mantrasPerYear + verbalMantrasPerYear
+
+                StatRow(label = "Wheel output per hour", value = NumberFormatter.format(mantrasPerHour))
+                StatRow(label = "Verbal recitation per hour", value = NumberFormatter.format(verbalMantrasPerHour))
+                StatRow(label = "Combined per hour", value = "${NumberFormatter.format(combinedPerHour)} mantras")
+                HorizontalDivider()
+                StatRow(label = "Wheel output per year", value = NumberFormatter.format(mantrasPerYear))
+                StatRow(label = "Verbal recitation per year", value = NumberFormatter.format(verbalMantrasPerYear))
+                StatRow(
+                    label = "Combined per year",
+                    value = NumberFormatter.formatWithFull(combinedPerYear)
+                )
+
+                if (personalRecitationRate == 0) {
+                    Text(
+                        text = "Set the verbal recitation slider above 0 to see your combined practice output.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
             }
         }
 
@@ -587,13 +671,13 @@ private fun PersonalCalculator(
                 )
                 val ladder = listOf(
                     "1,000 mantras ≈ 9 mala circuits",
-                    "1M mantras ≈ 9,259 malas (~1 day verbal)",
-                    "1B mantras ≈ 9.26M malas (~1 year of 1 verbal practitioner)",
-                    "1T mantras ≈ 9.26B malas (~1,000 years of 1 monk)",
-                    "1Qa mantras ≈ 9.26T malas (~1M years of 1 monk)",
-                    "1Qi mantras ≈ 9.26Qa malas (~70× the age of the universe in verbal practice)",
-                    "1Sx mantras ≈ 9.26Qi malas (~1,000× the age of the universe in verbal practice)",
-                    "1Sp mantras ≈ stars in the observable universe (1Sp)"
+                    "1M mantras ≈ 9,259 malas (~21 days of verbal recitation at 8hrs/day)",
+                    "1B mantras ≈ 9.26M malas (~57 years of verbal recitation at 8hrs/day)",
+                    "1T mantras ≈ 9.26B malas (~57,000 years of 1 practitioner at 8hrs/day)",
+                    "1Qa mantras ≈ 9.26T malas (~57 million years of 1 practitioner)",
+                    "1Qi mantras ≈ 9.26Qa malas (~57 billion years, ~4× the age of the universe)",
+                    "1Sx mantras ≈ 9.26Qi malas (~57 trillion years of verbal practice)",
+                    "1Sp mantras ≈ stars in the observable universe"
                 )
                 ladder.forEach { line ->
                     Text(text = line, style = MaterialTheme.typography.bodyMedium)
@@ -622,13 +706,15 @@ private fun MonasteryCalculator(
     var selectedTarget by remember { mutableStateOf(MantraTarget.ONE_QUADRILLION) }
 
     val mantrasPerMinute = remember(rpm, mantrasPerRotation) {
-        BigInteger.valueOf((rpm.toLong() * mantrasPerRotation))
+        BigInteger.valueOf(rpm.toLong()).multiply(BigInteger.valueOf(mantrasPerRotation))
     }
     val mantrasPerHour = remember(mantrasPerMinute) {
         mantrasPerMinute * BigInteger.valueOf(60)
     }
     val myDailyMantras = remember(mantrasPerHour, hoursPerDay) {
-        mantrasPerHour * BigInteger.valueOf(hoursPerDay.toLong())
+        mantrasPerHour.toBigDecimal()
+            .multiply(BigDecimal.valueOf(hoursPerDay.toDouble()))
+            .toBigInteger()
     }
 
     val verbalPerMinute = BigInteger.valueOf(recitationRate.toLong())
@@ -663,11 +749,13 @@ private fun MonasteryCalculator(
         verbalPerDay8h * BigInteger.valueOf(monksCount.toLong())
     }
     val communityWheelPerDay = remember(mantrasPerHour, hoursPerDay, monksCount) {
-        mantrasPerHour * BigInteger.valueOf(hoursPerDay.toLong()) * BigInteger.valueOf(monksCount.toLong())
+        mantrasPerHour.toBigDecimal()
+            .multiply(BigDecimal.valueOf(hoursPerDay.toDouble()))
+            .toBigInteger() * BigInteger.valueOf(monksCount.toLong())
     }
     val wheelVsVerbalRatio = remember(communityWheelPerDay, communityVerbalPerDay) {
         if (communityVerbalPerDay > BigInteger.ZERO) {
-            communityWheelPerDay.toBigDecimal().divide(communityVerbalPerDay.toBigDecimal(), 0, RoundingMode.HALF_UP)
+            communityWheelPerDay.toBigDecimal().divide(communityVerbalPerDay.toBigDecimal(), 1, RoundingMode.HALF_UP)
         } else BigDecimal.ONE
     }
 
@@ -716,12 +804,12 @@ private fun MonasteryCalculator(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "Your Practice vs Recitation",
+                    text = "Your Wheel Practice",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = "Each rotation of your wheel multiplies the mantra by the capacity setting. One spin at ${NumberFormatter.formatWithCommas(BigInteger.valueOf(mantrasPerRotation))} mantras/rotation equals the same as reciting it verbally ${NumberFormatter.formatWithCommas(BigInteger.valueOf(mantrasPerRotation))} times.",
+                    text = "Each rotation of your wheel releases the mantra ${NumberFormatter.formatWithCommas(BigInteger.valueOf(mantrasPerRotation))} times. The wheel accompanies your verbal recitation, multiplying the merit of practice you are already doing.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
@@ -759,7 +847,7 @@ private fun MonasteryCalculator(
                 )
 
                 Text(
-                    text = "To recite the same amount verbally at $recitationRate mantras/min:",
+                    text = "For context, the same total would take one person reciting verbally at $recitationRate mantras/min:",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
@@ -1081,9 +1169,38 @@ private fun MonasteryCalculator(
 
                 HorizontalDivider()
 
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Both together (wheels + verbal recitation)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                    val combinedPerDay = communityWheelPerDay + communityVerbalPerDay
+                    if (combinedPerDay > BigInteger.ZERO) {
+                        val combinedDays = selectedTarget.value.toBigDecimal()
+                            .divide(combinedPerDay.toBigDecimal(), 1, RoundingMode.HALF_UP)
+                        val combinedYears = combinedDays.divide(BigDecimal("365.25"), 1, RoundingMode.HALF_UP)
+                        Text(
+                            text = when {
+                                combinedYears >= BigDecimal.ONE -> "${combinedYears.stripTrailingZeros().toPlainString()} years"
+                                combinedDays >= BigDecimal.ONE -> "${combinedDays.stripTrailingZeros().toPlainString()} days"
+                                else -> "Less than 1 day"
+                            },
+                            style = MaterialTheme.typography.displaySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+
                 StatRow(
-                    label = "Acceleration from wheels",
-                    value = "${NumberFormatter.formatWithFull(wheelVsVerbalRatio.toBigInteger())}x faster"
+                    label = "Wheel amplification",
+                    value = "${wheelVsVerbalRatio.stripTrailingZeros().toPlainString()}× the verbal-only rate"
                 )
                 StatRow(
                     label = "Community verbal per day",
@@ -1131,7 +1248,7 @@ private fun MonasteryCalculator(
                 HorizontalDivider()
 
                 Text(
-                    text = "Equivalence (1 year of community verbal recitation)",
+                    text = "For context, 1 year of community verbal recitation produces:",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
@@ -1162,7 +1279,7 @@ private fun MonasteryCalculator(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "Wheel vs World",
+                    text = "Community Practice in Context",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Medium
                 )
@@ -1185,11 +1302,20 @@ private fun MonasteryCalculator(
                     label = "Per year vs world population",
                     value = "${NumberFormatter.format(worldPopPerYear)} mantras per person on Earth"
                 )
-                val percentOf1B = NumberFormatter.formatPercent(communityWheelPerDay, BigInteger.valueOf(1_000_000_000L))
-                StatRow(
-                    label = "Daily output as % of 1B milestone",
-                    value = percentOf1B
-                )
+                val oneB = BigInteger.valueOf(1_000_000_000L)
+                if (communityWheelPerDay >= oneB) {
+                    val ratio = communityWheelPerDay.divide(oneB)
+                    StatRow(
+                        label = "Daily output vs 1B milestone",
+                        value = "${NumberFormatter.format(ratio)}× the 1B target"
+                    )
+                } else {
+                    val percent = NumberFormatter.formatPercent(communityWheelPerDay, oneB)
+                    StatRow(
+                        label = "Daily output as % of 1B milestone",
+                        value = percent
+                    )
+                }
             }
         }
 
@@ -1263,43 +1389,6 @@ private fun MonasteryCalculator(
                     )
                 } else {
                     crossCulturalLines.forEach { line ->
-                        Text(text = line, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-            }
-        }
-
-        // ===== NEW: Fiction & Non-Fiction References card =====
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-            )
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "Fiction & Non-Fiction References",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = "Your community's yearly output across literature and cosmology",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                )
-                val fictionLines = buildFictionComparisons(communityWheelPerYear)
-                if (fictionLines.isEmpty()) {
-                    Text(
-                        text = "Increase your community size or rate to see fiction-scale comparisons.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                } else {
-                    fictionLines.forEach { line ->
                         Text(text = line, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
