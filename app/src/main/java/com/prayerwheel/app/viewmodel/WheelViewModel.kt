@@ -28,6 +28,7 @@ import com.prayerwheel.app.data.model.WheelSkins
 import com.prayerwheel.app.data.model.Session
 import com.prayerwheel.app.data.model.Achievement
 import com.prayerwheel.app.data.model.Achievements
+import com.prayerwheel.app.audio.AudioEngine
 import com.prayerwheel.app.notification.SessionNotificationService
 import com.prayerwheel.app.notification.SessionNotificationReceiver
 import com.prayerwheel.app.widget.PrayerWheelWidget
@@ -117,6 +118,29 @@ class WheelViewModel(
      * loser's upsert clobbers the winner's increment — a silent lost update.
      */
     private val lifetimeStatsMutex = Mutex()
+
+    /**
+     * Procedural audio engine — singing bowl tones at lifetime milestones and an
+     * RPM-driven ambient drone. Null until the init block constructs it; released
+     * via [audioEngine]?.stopDroneLoop() in onCleared().
+     */
+    private var audioEngine: AudioEngine? = null
+
+    /**
+     * Lifetime-mantra thresholds (1K → 1T) that trigger singing bowl tones.
+     * Index in this list = bowl tier (0 = deepest, 7 = brightest). Each entry
+     * mirrors the `mantrasRequired` of [Achievements.THOUSANDFOLD]…[Achievements.TRILLION].
+     */
+    private val audioMilestoneThresholds = listOf(
+        BigInteger.valueOf(1_000L),
+        BigInteger.valueOf(10_000L),
+        BigInteger.valueOf(100_000L),
+        BigInteger.valueOf(1_000_000L),
+        BigInteger.valueOf(10_000_000L),
+        BigInteger.valueOf(100_000_000L),
+        BigInteger.valueOf(1_000_000_000L),
+        BigInteger("1000000000000")
+    )
 
     /**
      * Current angular velocity in radians per second.
@@ -658,6 +682,25 @@ class WheelViewModel(
         viewModelScope.launch {
             userPreferences.unlockedAchievements.collect { achievements ->
                 _unlockedAchievements.value = achievements
+            }
+        }
+
+        // Procedural audio: instantiate the engine, watch all three audio settings
+        // simultaneously, and start the (silent-until-spun) ambient drone.
+        audioEngine = AudioEngine().also { engine ->
+            viewModelScope.launch {
+                combine(
+                    userPreferences.masterVolume,
+                    userPreferences.bellAtMilestones,
+                    userPreferences.ambientEnabled
+                ) { masterVolume, bellAtMilestones, ambientEnabled ->
+                    Triple(masterVolume, bellAtMilestones, ambientEnabled)
+                }.collect { (masterVolume, bellAtMilestones, ambientEnabled) ->
+                    engine.updateSettings(masterVolume, bellAtMilestones, ambientEnabled)
+                }
+            }
+            viewModelScope.launch {
+                engine.startDroneLoop()
             }
         }
         observeTodayProgress()
@@ -1790,6 +1833,7 @@ class WheelViewModel(
                 // Update RPM tracking: RPM = |ω| * 60 / (2π)
                 val currentRpm = abs(_angularVelocity.value) * 60f / TWO_PI
                 _currentRpm.value = currentRpm
+                audioEngine?.updateDrone(currentRpm)
 
                 // Calculate weight angle based on centrifugal force
                 // angle = atan(rpm / 30) clamped to 0..80 degrees
@@ -1892,8 +1936,19 @@ class WheelViewModel(
             // session's mantras to be double-counted: once incrementally per-rotation here,
             // then again at session save, inflating lifetime totals by N×.
             val mantrasThisRotation = _mantrasPerRotation.value.toBigInteger() * count.toBigInteger()
-            val newTotalMantras = _lifetimeMantras.value + mantrasThisRotation
+            val previousTotalMantras = _lifetimeMantras.value
+            val newTotalMantras = previousTotalMantras + mantrasThisRotation
             _lifetimeMantras.value = newTotalMantras
+
+            // Singing bowl at lifetime-mantra milestones (1K → 1T, tiers 0-7).
+            // Use indexOfLast so a single high-capacity rotation that crosses
+            // several thresholds plays the brightest tier reached, not the first.
+            val tierCrossed = audioMilestoneThresholds.indexOfLast { threshold ->
+                previousTotalMantras < threshold && newTotalMantras >= threshold
+            }
+            if (tierCrossed >= 0) {
+                audioEngine?.playBowlTone(tierCrossed)
+            }
 
             // Check achievements (reads the in-memory mantras value; does not touch lifetime_stats DB).
             checkAchievements(newTotalMantras)
@@ -2189,6 +2244,7 @@ class WheelViewModel(
         }
         physicsJob?.cancel()
         sessionTimerJob?.cancel()
+        audioEngine?.stopDroneLoop()
     }
 
     private data class DragEvent(
