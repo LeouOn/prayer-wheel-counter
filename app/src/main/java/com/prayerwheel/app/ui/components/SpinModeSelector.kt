@@ -1,5 +1,7 @@
 package com.prayerwheel.app.ui.components
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -10,35 +12,65 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 
 /**
- * Spin mode selector with two independent toggles for Auto-Spin and Two-Handed modes.
- * Allows combining both modes simultaneously.
+ * Spin mode selector with three independent toggles for Auto-Spin, Two-Handed (Dual Wheels),
+ * and Breath/Wind modes. Toggles may be combined.
+ *
+ * Breath mode requests RECORD_AUDIO on first enable via an in-app explanation dialog
+ * followed by the system permission prompt. The microphone is used solely for
+ * real-time amplitude detection — no audio is recorded or stored.
  */
 @Composable
 fun SpinModeSelector(
     autoSpinEnabled: Boolean,
     twoHandedEnabled: Boolean,
+    breathModeEnabled: Boolean,
     autoSpinRpm: Int,
     onAutoSpinToggle: (Boolean) -> Unit,
     onTwoHandedToggle: (Boolean) -> Unit,
+    onBreathModeToggle: (Boolean) -> Unit,
     onRpmChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+
+    // Tracks whether the user has dismissed the breath-mode permission explanation
+    // at least once this session. We re-show it whenever they re-attempt to enable
+    // breath mode without having granted RECORD_AUDIO.
+    var showBreathPermissionDialog by remember { mutableStateOf(false) }
+
+    val recordAudioLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        // Only flip breath mode on if the user actually granted the mic.
+        // If they denied, leave the toggle off — they can retry by toggling again.
+        onBreathModeToggle(granted)
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -177,6 +209,120 @@ fun SpinModeSelector(
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
             )
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Divider
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Breath/Wind mode toggle
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Unicode "wind face" glyph — breath/wind symbol. Used in place of
+                // a Material icon because the project does not depend on
+                // material-icons-extended, and the existing UI uses Unicode glyphs
+                // (e.g. "⏸" pause, "↻" resume) for similar symbolic indicators.
+                Text(
+                    text = "\uD83C\uDF2C", // 🌬 — wind face
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (breathModeEnabled) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    }
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "Breath Mode",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "Your breath spins the wheel",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+            }
+            Switch(
+                checked = breathModeEnabled,
+                onCheckedChange = { enabled ->
+                    if (enabled) {
+                        val granted = ContextCompat.checkSelfPermission(
+                            context,
+                            android.Manifest.permission.RECORD_AUDIO
+                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                        if (granted) {
+                            onBreathModeToggle(true)
+                        } else {
+                            // Show the explanation first; the actual system prompt fires
+                            // when the user taps "Allow" in the dialog.
+                            showBreathPermissionDialog = true
+                        }
+                    } else {
+                        onBreathModeToggle(false)
+                    }
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = MaterialTheme.colorScheme.primary,
+                    checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            )
+        }
+
+        if (breathModeEnabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Breathe steadily toward your phone. No audio is recorded or stored.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+            )
+        }
+    }
+
+    // In-app permission explanation shown BEFORE the system permission prompt.
+    // Android best practice: educate the user on why the permission is needed
+    // before triggering the system dialog, so they can make an informed choice.
+    if (showBreathPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showBreathPermissionDialog = false
+                // User declined the explanation — leave breath mode off.
+                onBreathModeToggle(false)
+            },
+            title = { Text("Breath Mode needs microphone access") },
+            text = {
+                Text(
+                    "Breath mode uses your microphone to detect your breathing and " +
+                        "spin the wheel accordingly. No audio is recorded or stored — " +
+                        "only the momentary loudness is measured in memory and then discarded."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBreathPermissionDialog = false
+                    recordAudioLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                }) { Text("Allow") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showBreathPermissionDialog = false
+                    onBreathModeToggle(false)
+                }) { Text("Not now") }
+            }
+        )
     }
 }
 

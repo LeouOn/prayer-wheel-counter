@@ -126,6 +126,7 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         val AUTO_LABEL_SESSIONS = booleanPreferencesKey("auto_label_sessions")
         val WHEEL_MASS = floatPreferencesKey("wheel_mass")
         val JE_NYER_ENABLED = booleanPreferencesKey("je_nyer_enabled")
+        val BREATH_MODE_ENABLED = booleanPreferencesKey("breath_mode_enabled")
     }
 
     val selectedMantra: Flow<String> = dataStore.data.map { preferences ->
@@ -344,6 +345,17 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
 
     val jeNyerEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[Keys.JE_NYER_ENABLED] ?: true
+    }
+
+    /**
+     * Whether breath/wind spin mode is enabled. When true, the wheel physics
+     * loop reads microphone amplitude via [com.prayerwheel.app.audio.BreathModeController]
+     * and applies torque proportional to breath loudness. Defaults to false.
+     * The microphone is used solely for in-memory RMS amplitude detection —
+     * no audio is ever recorded, encoded, persisted, or transmitted.
+     */
+    val breathModeEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[Keys.BREATH_MODE_ENABLED] ?: false
     }
 
     suspend fun setSelectedMantra(mantra: String) {
@@ -666,6 +678,12 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
     suspend fun setJeNyerEnabled(enabled: Boolean) {
         dataStore.edit { preferences ->
             preferences[Keys.JE_NYER_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setBreathModeEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[Keys.BREATH_MODE_ENABLED] = enabled
         }
     }
 

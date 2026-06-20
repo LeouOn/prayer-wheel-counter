@@ -181,6 +181,29 @@ private fun tieredGlowIntensity(angularVelocity: Float): Float {
 }
 
 /**
+ * Persistent aura floor beneath the tiered glow. A practitioner who has crossed
+ * a lifetime milestone always sees at least this much ambient glow on their
+ * wheel, even at 0 RPM — the wheel accumulates devotional "warmth" that never
+ * fully fades. Maps lifetime tier (0..8, see [WheelViewModel.highestMilestoneTier])
+ * to a minimum glow intensity.
+ */
+private fun milestoneAuraFloor(tier: Int): Float = when {
+    tier >= 7 -> 0.15f   // 1B+: radiant
+    tier >= 5 -> 0.10f   // 10M+: clearly visible
+    tier >= 3 -> 0.06f   // 100K+: subtle
+    tier >= 1 -> 0.03f   // 1K+: barely visible warmth
+    else -> 0f
+}
+
+/**
+ * Effective glow intensity: the larger of the velocity-driven tiered glow and
+ * the lifetime-milestone aura floor. Used by every wheel renderer so the
+ * persistent aura shows uniformly across all view modes.
+ */
+private fun effectiveGlowIntensity(angularVelocity: Float, milestoneTier: Int): Float =
+    maxOf(tieredGlowIntensity(angularVelocity), milestoneAuraFloor(milestoneTier))
+
+/**
  * Main prayer wheel screen.
  *
  * Implements drag-to-spin interaction with momentum physics.
@@ -231,6 +254,8 @@ fun WheelScreen(
     val savedWheels by viewModel.savedWheels.collectAsState()
     val autoSpinEnabled by viewModel.autoSpinEnabled.collectAsState()
     val twoHandedEnabled by viewModel.twoHandedEnabled.collectAsState()
+    val breathModeEnabled by viewModel.breathModeEnabled.collectAsState()
+    val highestMilestoneTier by viewModel.highestMilestoneTier.collectAsState()
     val isPaused by viewModel.isPaused.collectAsState()
     val todayMorningCompleted by viewModel.todayMorningCompleted.collectAsState()
     val todayEveningCompleted by viewModel.todayEveningCompleted.collectAsState()
@@ -407,9 +432,11 @@ fun WheelScreen(
                 SpinModeSelector(
                     autoSpinEnabled = autoSpinEnabled,
                     twoHandedEnabled = twoHandedEnabled,
+                    breathModeEnabled = breathModeEnabled,
                     autoSpinRpm = autoSpinRpm,
                     onAutoSpinToggle = { viewModel.setAutoSpinEnabled(it) },
                     onTwoHandedToggle = { viewModel.setTwoHandedEnabled(it) },
+                    onBreathModeToggle = { viewModel.setBreathModeEnabled(it) },
                     onRpmChange = { viewModel.setAutoSpinRpm(it) },
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -433,6 +460,7 @@ fun WheelScreen(
                             milestoneGlowAlpha = milestoneGlowAlpha,
                             wheelSkin = selectedSkin,
                             sendLightActive = sendLightActive,
+                            highestMilestoneTier = highestMilestoneTier,
                             onDragStart = { viewModel.onDragStart() },
                             onDragMove = { x, y, centerX, centerY, timestamp ->
                                 viewModel.onDragMove(x, y, centerX, centerY, timestamp)
@@ -464,6 +492,7 @@ else {
                             sessionTimeGoalSeconds = sessionTimeGoalSeconds,
                             hasActiveSession = hasActiveSession,
                             sessionDuration = sessionDuration,
+                            highestMilestoneTier = highestMilestoneTier,
                             onUpdateCanvasDimensions = { width, height ->
                                 viewModel.updateCanvasDimensions(width, height)
                             },
@@ -490,6 +519,7 @@ else {
                             milestoneGlowAlpha = milestoneGlowAlpha,
                             wheelSkin = selectedSkin,
                             sendLightActive = sendLightActive,
+                            highestMilestoneTier = highestMilestoneTier,
                             onDragStart = { viewModel.onDragStart() },
                             onDragMove = { x, y, centerX, centerY, timestamp ->
                                 viewModel.onDragMove(x, y, centerX, centerY, timestamp)
@@ -513,6 +543,7 @@ else {
                             milestoneGlowAlpha = milestoneGlowAlpha,
                             wheelSkin = selectedSkin,
                             sendLightActive = sendLightActive,
+                            highestMilestoneTier = highestMilestoneTier,
                             onDragStart = { viewModel.onDragStart() },
                             onDragMove = { x, y, centerX, centerY, timestamp ->
                                 viewModel.onDragMove(x, y, centerX, centerY, timestamp)
@@ -536,6 +567,7 @@ else {
                             milestoneGlowAlpha = milestoneGlowAlpha,
                             wheelSkin = selectedSkin,
                             sendLightActive = sendLightActive,
+                            highestMilestoneTier = highestMilestoneTier,
                             onDragStart = { viewModel.onDragStart() },
                             onDragMove = { x, y, centerX, centerY, timestamp ->
                                 viewModel.onDragMove(x, y, centerX, centerY, timestamp)
@@ -559,6 +591,7 @@ else {
                             milestoneGlowAlpha = milestoneGlowAlpha,
                             wheelSkin = selectedSkin,
                             sendLightActive = sendLightActive,
+                            highestMilestoneTier = highestMilestoneTier,
                             onDragStart = { viewModel.onDragStart() },
                             onDragMove = { x, y, centerX, centerY, timestamp ->
                                 viewModel.onDragMove(x, y, centerX, centerY, timestamp)
@@ -1221,6 +1254,7 @@ private fun SideViewPrayerWheel(
     sessionTimeGoalSeconds: Long,
     hasActiveSession: Boolean,
     sessionDuration: Long,
+    highestMilestoneTier: Int,
     onUpdateCanvasDimensions: (Float, Float) -> Unit,
     onDragStart: () -> Unit,
     onDragMove: (Float, Float, Float, Float, Long) -> Unit,
@@ -1231,8 +1265,8 @@ private fun SideViewPrayerWheel(
 ) {
     val textMeasurer = rememberTextMeasurer()
 
-    // Calculate glow intensity based on angular velocity
-    val glowIntensity = tieredGlowIntensity(angularVelocity)
+    // Calculate glow intensity based on angular velocity, floored by the persistent milestone aura
+    val glowIntensity = effectiveGlowIntensity(angularVelocity, highestMilestoneTier)
 
     // Crystal sway based on angular velocity (small oscillation)
     val crystalSway = if (glowIntensity > 0.1f) {
@@ -2398,6 +2432,7 @@ private fun TopDownViewPrayerWheel(
     milestoneGlowAlpha: Float,
     wheelSkin: WheelSkin,
     sendLightActive: Boolean,
+    highestMilestoneTier: Int,
     onDragStart: () -> Unit,
     onDragMove: (Float, Float, Float, Float, Long) -> Unit,
     onDragEnd: () -> Unit,
@@ -2405,7 +2440,7 @@ private fun TopDownViewPrayerWheel(
     onPointerCountChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val glowIntensity = tieredGlowIntensity(angularVelocity)
+    val glowIntensity = effectiveGlowIntensity(angularVelocity, highestMilestoneTier)
 
     Box(
         modifier = modifier
@@ -2620,6 +2655,7 @@ private fun AbstractViewPrayerWheel(
     milestoneGlowAlpha: Float,
     wheelSkin: WheelSkin,
     sendLightActive: Boolean,
+    highestMilestoneTier: Int,
     onDragStart: () -> Unit,
     onDragMove: (Float, Float, Float, Float, Long) -> Unit,
     onDragEnd: () -> Unit,
@@ -2628,7 +2664,7 @@ private fun AbstractViewPrayerWheel(
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
-    val glowIntensity = tieredGlowIntensity(angularVelocity)
+    val glowIntensity = effectiveGlowIntensity(angularVelocity, highestMilestoneTier)
 
     // Pulsing glow sync with mantra rhythm
     val infiniteTransition = rememberInfiniteTransition(label = "abstractPulse")
@@ -2997,6 +3033,7 @@ private fun DualWheelsView(
     milestoneGlowAlpha: Float,
     wheelSkin: WheelSkin,
     sendLightActive: Boolean,
+    highestMilestoneTier: Int,
     onDragStart: () -> Unit,
     onDragMove: (Float, Float, Float, Float, Long) -> Unit,
     onDragEnd: () -> Unit,
@@ -3005,7 +3042,7 @@ private fun DualWheelsView(
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
-    val glowIntensity = tieredGlowIntensity(angularVelocity)
+    val glowIntensity = effectiveGlowIntensity(angularVelocity, highestMilestoneTier)
 
     Box(
         modifier = modifier
@@ -3232,6 +3269,7 @@ private fun TableTopViewPrayerWheel(
     milestoneGlowAlpha: Float,
     wheelSkin: WheelSkin,
     sendLightActive: Boolean,
+    highestMilestoneTier: Int,
     onDragStart: () -> Unit,
     onDragMove: (Float, Float, Float, Float, Long) -> Unit,
     onDragEnd: () -> Unit,
@@ -3240,7 +3278,7 @@ private fun TableTopViewPrayerWheel(
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
-    val glowIntensity = tieredGlowIntensity(angularVelocity)
+    val glowIntensity = effectiveGlowIntensity(angularVelocity, highestMilestoneTier)
 
     Box(
         modifier = modifier
@@ -3342,6 +3380,7 @@ private fun GlobeViewPrayerWheel(
     milestoneGlowAlpha: Float,
     wheelSkin: WheelSkin,
     sendLightActive: Boolean,
+    highestMilestoneTier: Int,
     onDragStart: () -> Unit,
     onDragMove: (Float, Float, Float, Float, Long) -> Unit,
     onDragEnd: () -> Unit,
@@ -3349,7 +3388,7 @@ private fun GlobeViewPrayerWheel(
     onPointerCountChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val glowIntensity = tieredGlowIntensity(angularVelocity)
+    val glowIntensity = effectiveGlowIntensity(angularVelocity, highestMilestoneTier)
 
     Box(
         modifier = modifier

@@ -29,6 +29,7 @@ import com.prayerwheel.app.data.model.Session
 import com.prayerwheel.app.data.model.Achievement
 import com.prayerwheel.app.data.model.Achievements
 import com.prayerwheel.app.audio.AudioEngine
+import com.prayerwheel.app.audio.BreathModeController
 import com.prayerwheel.app.notification.SessionNotificationService
 import com.prayerwheel.app.notification.SessionNotificationReceiver
 import com.prayerwheel.app.widget.PrayerWheelWidget
@@ -108,6 +109,17 @@ class WheelViewModel(
         private const val HAPTIC_SLIDER_DURATION = 3L
         private const val HAPTIC_MILESTONE_DURATION = 20L
         private const val SESSION_TIMER_INTERVAL_MS = 1000L
+
+        // Breath mode: angular acceleration (rad/s²) per unit of normalized mic
+        // amplitude. At steady breath (amp ≈ 0.3–0.5) the wheel settles around
+        // 30–60 RPM; a strong blow (amp ≈ 1.0) approaches the 120 RPM devotional
+        // cap. Tuned against FRICTION_COEFFICIENT so the steady-state velocity
+        // (BREATH_TORQUE × amp / μ) lands in that band.
+        private const val BREATH_TORQUE = 0.1f
+        // Below this normalized amplitude the breath input is treated as zero
+        // for the purposes of (a) keeping the physics loop alive and
+        // (b) bypassing static-friction snap-to-zero.
+        private const val BREATH_ACTIVE_THRESHOLD = 0.01f
     }
 
     /**
@@ -124,6 +136,13 @@ class WheelViewModel(
      * via [audioEngine]?.stopDroneLoop() in onCleared().
      */
     private var audioEngine: AudioEngine? = null
+
+    /**
+     * Microphone-amplitude driver for breath/wind mode. Null until [init]
+     * constructs it; released via [breathModeController]?.stop() in onCleared().
+     * Tied to [viewModelScope] so its IO coroutine is cancelled with the ViewModel.
+     */
+    private var breathModeController: BreathModeController? = null
 
     /**
      * Lifetime-mantra thresholds (1K → 1T) that trigger singing bowl tones.
@@ -388,6 +407,22 @@ class WheelViewModel(
      */
     private val _twoHandedEnabled = MutableStateFlow(false)
     val twoHandedEnabled: StateFlow<Boolean> = _twoHandedEnabled.asStateFlow()
+
+    /**
+     * Whether breath/wind mode is enabled. When true, microphone amplitude
+     * drives the wheel via [BreathModeController].
+     */
+    private val _breathModeEnabled = MutableStateFlow(false)
+    val breathModeEnabled: StateFlow<Boolean> = _breathModeEnabled.asStateFlow()
+
+    /**
+     * Highest lifetime-milestone tier the practitioner has crossed (0 = none,
+     * 1 = 1K, … 8 = 1T). Drives the persistent aura floor: even at rest, a
+     * practitioner with 1B+ lifetime mantras sees a gentle glow on their wheel.
+     * Indices align with [audioMilestoneThresholds] (tier = index + 1).
+     */
+    private val _highestMilestoneTier = MutableStateFlow(0)
+    val highestMilestoneTier: StateFlow<Int> = _highestMilestoneTier.asStateFlow()
 
     private val _isAppInForeground = MutableStateFlow(true)
     val isAppInForeground: StateFlow<Boolean> = _isAppInForeground.asStateFlow()
@@ -683,6 +718,18 @@ class WheelViewModel(
                 _unlockedAchievements.value = achievements
             }
         }
+        viewModelScope.launch {
+            userPreferences.breathModeEnabled.collect { enabled ->
+                _breathModeEnabled.value = enabled
+                if (enabled) {
+                    breathModeController?.start()
+                    startSessionIfNeeded()
+                    startPhysicsLoop()
+                } else {
+                    breathModeController?.stop()
+                }
+            }
+        }
 
         // Procedural audio: instantiate the engine, watch all three audio settings
         // simultaneously, and start the (silent-until-spun) ambient drone.
@@ -702,6 +749,7 @@ class WheelViewModel(
                 engine.startDroneLoop()
             }
         }
+        breathModeController = BreathModeController(appContext, viewModelScope)
         observeTodayProgress()
         loadLifetimeStats()
     }
@@ -1211,6 +1259,27 @@ class WheelViewModel(
     }
 
     /**
+     * Enables or disables breath/wind mode. Starts the microphone controller
+     * and physics loop immediately on enable; stops the controller on disable.
+     * If RECORD_AUDIO is not granted, the controller's start() is a graceful
+     * no-op — the wheel simply does not respond to breath until permission is
+     * granted and the toggle is re-flipped.
+     */
+    fun setBreathModeEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            _breathModeEnabled.value = enabled
+            userPreferences.setBreathModeEnabled(enabled)
+            if (enabled) {
+                breathModeController?.start()
+                startSessionIfNeeded()
+                startPhysicsLoop()
+            } else {
+                breathModeController?.stop()
+            }
+        }
+    }
+
+    /**
      * Adds a new saved wheel profile.
      */
     fun addSavedWheel(name: String, capacity: Long, mantraId: String) {
@@ -1419,6 +1488,7 @@ class WheelViewModel(
             }
             // In-memory display reset so the wheel screen updates immediately.
             _lifetimeMantras.value = BigInteger.ZERO
+            _highestMilestoneTier.value = 0
             // Trigger widget refresh (same pattern as the rotation-completion path).
             runCatching { PrayerWheelWidget().updateAll(appContext) }
         }
@@ -1702,6 +1772,7 @@ class WheelViewModel(
             updated
         }
         checkAchievements(newStats.totalMantras)
+        updateHighestMilestoneTier(newStats.totalMantras)
     }
 
     private fun startSessionIfNeeded() {
@@ -1772,9 +1843,16 @@ class WheelViewModel(
         physicsJob?.cancel()
         lastFrameTime = System.currentTimeMillis()
         physicsJob = viewModelScope.launch {
-            // Loop stays alive while there is motion, particles to animate, or auto-spin is driving
-            // (so the torque-limited ramp can accelerate the wheel up from rest).
-            while (isActive && (abs(_angularVelocity.value) > STOP_THRESHOLD || _starParticles.value.isNotEmpty() || _autoSpinEnabled.value)) {
+            // Loop stays alive while there is motion, particles to animate, auto-spin
+            // is driving (so the torque-limited ramp can accelerate from rest), OR
+            // breath mode is actively receiving non-trivial microphone amplitude.
+            while (isActive && (
+                    abs(_angularVelocity.value) > STOP_THRESHOLD ||
+                        _starParticles.value.isNotEmpty() ||
+                        _autoSpinEnabled.value ||
+                        (_breathModeEnabled.value &&
+                            (breathModeController?.amplitude?.value ?: 0f) > BREATH_ACTIVE_THRESHOLD)
+                )) {
                 val currentTime = System.currentTimeMillis()
                 val deltaTime = (currentTime - lastFrameTime).coerceAtLeast(1L) / 1000f
                 lastFrameTime = currentTime
@@ -1793,7 +1871,7 @@ class WheelViewModel(
                     val maxStepThisFrame = AUTO_SPIN_MAX_ACCEL_PER_FRAME * (deltaTime * 60f)
                     currentOmega + gap.coerceIn(-maxStepThisFrame, maxStepThisFrame)
                 } else {
-                    // Manual / two-handed / coast: friction decay ω_{t+1} = ω_t × (1 - μ × Δt)
+                    // Manual / two-handed / coast / breath: friction decay ω_{t+1} = ω_t × (1 - μ × Δt)
                     val frictionCoefficient = when {
                         isTwoHandedMode && _twoHandedEngaged.value -> TWO_HANDED_FRICTION
                         else -> _baseFriction.value
@@ -1810,8 +1888,20 @@ class WheelViewModel(
                         else -> frictionDecayed
                     }
 
+                    // Breath mode: microphone amplitude applies clockwise torque proportional
+                    // to loudness, alongside the existing friction/weight forces. This is purely
+                    // additive — no existing physics formula is modified.
+                    val breathAmp = if (_breathModeEnabled.value)
+                        breathModeController?.amplitude?.value ?: 0f else 0f
+                    val withBreath = if (breathAmp > 0f) {
+                        withCoupling + breathAmp * BREATH_TORQUE * deltaTime
+                    } else withCoupling
+
                     // Static friction: clean halt when very slow and no torque applied this frame.
-                    if (abs(withCoupling) < STATIC_FRICTION_THRESHOLD) 0f else withCoupling
+                    // Breath is allowed to accumulate from rest (otherwise tiny per-frame breath
+                    // torque could never break through the 0.05 rad/s threshold).
+                    if (breathAmp > BREATH_ACTIVE_THRESHOLD) withBreath
+                    else if (abs(withBreath) < STATIC_FRICTION_THRESHOLD) 0f else withBreath
                 }
 
                 _angularVelocity.value = if (abs(calculatedVelocity) < STOP_THRESHOLD) 0f else calculatedVelocity
@@ -1953,6 +2043,7 @@ class WheelViewModel(
             val previousTotalMantras = _lifetimeMantras.value
             val newTotalMantras = previousTotalMantras + mantrasThisRotation
             _lifetimeMantras.value = newTotalMantras
+            updateHighestMilestoneTier(newTotalMantras)
 
             // Singing bowl at lifetime-mantra milestones (1K → 1T, tiers 0-7).
             // Use indexOfLast so a single high-capacity rotation that crosses
@@ -2112,9 +2203,24 @@ class WheelViewModel(
     private fun loadLifetimeStats() {
         viewModelScope.launch {
             lifetimeStatsDao.observeStats().collect { stats ->
-                _lifetimeMantras.value = stats?.totalMantras ?: BigInteger.ZERO
+                val total = stats?.totalMantras ?: BigInteger.ZERO
+                _lifetimeMantras.value = total
+                updateHighestMilestoneTier(total)
             }
         }
+    }
+
+    /**
+     * Recomputes [_highestMilestoneTier] from a lifetime-mantra total. Tier is
+     * the count of [audioMilestoneThresholds] entries the total has reached or
+     * exceeded (1..8), or 0 if below the lowest threshold. Idempotent.
+     */
+    private fun updateHighestMilestoneTier(lifetimeMantras: BigInteger) {
+        var tier = 0
+        for ((i, threshold) in audioMilestoneThresholds.withIndex()) {
+            if (lifetimeMantras >= threshold) tier = i + 1
+        }
+        _highestMilestoneTier.value = tier
     }
 
     private suspend fun checkAchievements(totalMantras: BigInteger) {
@@ -2332,6 +2438,7 @@ class WheelViewModel(
         physicsJob?.cancel()
         sessionTimerJob?.cancel()
         audioEngine?.stopDroneLoop()
+        breathModeController?.stop()
     }
 
     private data class DragEvent(
