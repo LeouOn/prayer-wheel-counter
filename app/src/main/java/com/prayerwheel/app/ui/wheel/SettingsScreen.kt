@@ -30,6 +30,8 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -164,7 +166,9 @@ fun SettingsScreen(
 
     // Reset confirmation dialog
     var showResetDialog by remember { mutableStateOf(false) }
-    
+
+    var showLifetimeResetDialog by remember { mutableStateOf(false) }
+
     // Dedication editor dialog
     var showDedicationEditor by remember { mutableStateOf(false) }
     var dedicationEditorText by remember { mutableStateOf(customDedication ?: UserPreferences.DEFAULT_DEDICATION_TEXT) }
@@ -1015,6 +1019,43 @@ fun SettingsScreen(
                 )
             }
 
+            // DANGER ZONE
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Danger Zone",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = "Reset your lifetime accumulation counters. Your individual session records are preserved, but the totals shown in stats will reset to zero. Use this to start fresh after a data issue.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                    Button(
+                        onClick = { showLifetimeResetDialog = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        )
+                    ) {
+                        Text("Reset Lifetime Stats")
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
         }
 
@@ -1040,6 +1081,35 @@ fun SettingsScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { showResetDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        // Lifetime-stats reset confirmation dialog
+        if (showLifetimeResetDialog) {
+            AlertDialog(
+                onDismissRequest = { showLifetimeResetDialog = false },
+                title = { Text("Reset Lifetime Stats") },
+                text = {
+                    Text(
+                        "This will zero out your lifetime rotation count, total mantras, and total practice time. " +
+                            "Your individual session records will be preserved. This cannot be undone."
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showLifetimeResetDialog = false
+                            viewModel.resetLifetimeStats()
+                        }
+                    ) {
+                        Text("Reset", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showLifetimeResetDialog = false }) {
                         Text("Cancel")
                     }
                 }

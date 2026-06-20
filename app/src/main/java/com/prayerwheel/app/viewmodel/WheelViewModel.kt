@@ -1349,6 +1349,36 @@ class WheelViewModel(
     }
 
     /**
+     * Reset all lifetime accumulation counters to zero. Preserves the individual
+     * session records in the sessions table (so history is still browsable).
+     * Use this to start fresh after correcting a data-corruption bug.
+     *
+     * Holds the same [lifetimeStatsMutex] as every other lifetime_stats writer so
+     * a concurrent session-end save cannot interleave with this reset.
+     */
+    fun resetLifetimeStats() {
+        viewModelScope.launch {
+            lifetimeStatsMutex.withLock {
+                lifetimeStatsDao.upsert(
+                    LifetimeStats(
+                        id = 1,
+                        totalRotations = 0L,
+                        totalMantras = BigInteger.ZERO,
+                        sessionsCompleted = 0L,
+                        firstSessionAt = null,
+                        totalSpinningTimeSeconds = 0L,
+                        averageSessionDurationSeconds = 0L
+                    )
+                )
+            }
+            // In-memory display reset so the wheel screen updates immediately.
+            _lifetimeMantras.value = BigInteger.ZERO
+            // Trigger widget refresh (same pattern as the rotation-completion path).
+            runCatching { PrayerWheelWidget().updateAll(appContext) }
+        }
+    }
+
+    /**
      * Cycles to the next view mode.
      */
     fun cycleViewMode() {
