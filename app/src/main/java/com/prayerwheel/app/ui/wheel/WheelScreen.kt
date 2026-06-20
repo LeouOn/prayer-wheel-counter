@@ -155,6 +155,32 @@ private val MILESTONE_THRESHOLDS = listOf(
 )
 
 /**
+ * Tiered glow intensity across the 0–120 RPM devotional speed range.
+ *
+ * Maps |angularVelocity| (rad/s) to a 0..1 glow intensity through four
+ * qualitative tiers — Still, Flowing, Blazing, Dissolving — each smoothly
+ * interpolated at its boundaries. The tiers mirror traditional descriptions
+ * of deepening samadhi: the visual energy grows in distinct stages rather
+ * than along a single linear ramp.
+ *
+ * Boundary ω values come from RPM × 2π/60:
+ *  20 RPM ≈ 2.0944, 50 RPM ≈ 5.2359, 90 RPM ≈ 9.4247, 120 RPM ≈ 12.566.
+ */
+private fun tieredGlowIntensity(angularVelocity: Float): Float {
+    val omega = abs(angularVelocity)
+    return when {
+        // Tier 1 — Still (0–20 RPM): barely-there meditative glow (0.0–0.15).
+        omega <= 2.0944f -> (omega / 2.0944f) * 0.15f
+        // Tier 2 — Flowing (20–50 RPM): warm glow building up (0.15–0.5).
+        omega <= 5.2359f -> 0.15f + ((omega - 2.0944f) / (5.2359f - 2.0944f)) * (0.5f - 0.15f)
+        // Tier 3 — Blazing (50–90 RPM): full glow (0.5–0.85).
+        omega <= 9.4247f -> 0.5f + ((omega - 5.2359f) / (9.4247f - 5.2359f)) * (0.85f - 0.5f)
+        // Tier 4 — Dissolving (90–120 RPM): ethereal maximum glow (0.85–1.0).
+        else -> 0.85f + ((omega - 9.4247f) / (12.566f - 9.4247f)).coerceIn(0f, 1f) * (1.0f - 0.85f)
+    }
+}
+
+/**
  * Main prayer wheel screen.
  *
  * Implements drag-to-spin interaction with momentum physics.
@@ -1206,7 +1232,7 @@ private fun SideViewPrayerWheel(
     val textMeasurer = rememberTextMeasurer()
 
     // Calculate glow intensity based on angular velocity
-    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
+    val glowIntensity = tieredGlowIntensity(angularVelocity)
 
     // Crystal sway based on angular velocity (small oscillation)
     val crystalSway = if (glowIntensity > 0.1f) {
@@ -2379,7 +2405,7 @@ private fun TopDownViewPrayerWheel(
     onPointerCountChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
+    val glowIntensity = tieredGlowIntensity(angularVelocity)
 
     Box(
         modifier = modifier
@@ -2602,7 +2628,7 @@ private fun AbstractViewPrayerWheel(
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
-    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
+    val glowIntensity = tieredGlowIntensity(angularVelocity)
 
     // Pulsing glow sync with mantra rhythm
     val infiniteTransition = rememberInfiniteTransition(label = "abstractPulse")
@@ -2979,7 +3005,7 @@ private fun DualWheelsView(
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
-    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
+    val glowIntensity = tieredGlowIntensity(angularVelocity)
 
     Box(
         modifier = modifier
@@ -3214,7 +3240,7 @@ private fun TableTopViewPrayerWheel(
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
-    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
+    val glowIntensity = tieredGlowIntensity(angularVelocity)
 
     Box(
         modifier = modifier
@@ -3323,7 +3349,7 @@ private fun GlobeViewPrayerWheel(
     onPointerCountChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
+    val glowIntensity = tieredGlowIntensity(angularVelocity)
 
     Box(
         modifier = modifier

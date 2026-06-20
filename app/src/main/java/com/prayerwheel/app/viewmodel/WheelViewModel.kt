@@ -104,7 +104,6 @@ class WheelViewModel(
         private const val WHEEL_MASS_DEFAULT = 1.0f
 
         // Haptic feedback durations in milliseconds
-        private const val HAPTIC_TICK_DURATION = 5L
         private const val HAPTIC_PAUSE_DURATION = 50L
         private const val HAPTIC_SLIDER_DURATION = 3L
         private const val HAPTIC_MILESTONE_DURATION = 20L
@@ -1882,7 +1881,7 @@ class WheelViewModel(
                 // Spawn new particles while spinning
                 val velocity = abs(_angularVelocity.value)
                 if (velocity > STOP_THRESHOLD && canvasWidth > 0 && canvasHeight > 0) {
-                    val spawnProbability = (velocity / MAX_ANGULAR_VELOCITY) * 0.25f
+                    val spawnProbability = tieredParticleSpawnProbability(velocity)
                     if (Math.random() < spawnProbability && currentParticles.size < 40) {
                         currentParticles.add(
                             StarParticle(
@@ -1912,6 +1911,21 @@ class WheelViewModel(
         physicsJob?.cancel()
         physicsJob = null
         _isSpinning.value = false
+    }
+
+    /**
+     * Per-frame star-particle spawn probability, tiered across the RPM range.
+     * Boundary ω values are 20/50/90/120 RPM × 2π/60 ≈ 2.0944/5.2359/9.4247/12.566.
+     * Tier 4 (Dissolving) caps at the [MAX_ANGULAR_VELOCITY] devotional ceiling.
+     */
+    private fun tieredParticleSpawnProbability(angularVelocity: Float): Float {
+        val omega = abs(angularVelocity)
+        return when {
+            omega <= 2.0944f -> 0f
+            omega <= 5.2359f -> ((omega - 2.0944f) / (5.2359f - 2.0944f)) * 0.15f
+            omega <= 9.4247f -> 0.15f + ((omega - 5.2359f) / (9.4247f - 5.2359f)) * (0.35f - 0.15f)
+            else -> 0.35f + ((omega - 9.4247f) / (MAX_ANGULAR_VELOCITY - 9.4247f)).coerceIn(0f, 1f) * (0.6f - 0.35f)
+        }
     }
 
     private fun scheduleSessionSave() {
@@ -2110,7 +2124,9 @@ class WheelViewModel(
         for (achievement in allAchievements) {
             if (achievement.id !in currentlyUnlocked && totalMantras >= achievement.mantrasRequired) {
                 userPreferences.unlockAchievement(achievement.id)
-                triggerMilestoneHaptic()
+                val tier = audioMilestoneThresholds.indexOfFirst { it == achievement.mantrasRequired }
+                    .coerceAtLeast(0)
+                triggerMilestoneHaptic(tier)
                 _newlyUnlockedAchievement.value = achievement
             }
         }
@@ -2142,9 +2158,26 @@ class WheelViewModel(
     }
 
     private fun triggerHapticTick() {
-        if (shouldVibrate()) {
-            triggerHaptic(HAPTIC_TICK_DURATION)
-        }
+        if (!shouldVibrate()) return
+        val rpm = _currentRpm.value
+        triggerScaledHaptic(getTickDuration(rpm), getTickAmplitudeScale(rpm))
+    }
+
+    /**
+     * Rotation-tick duration scales inversely with RPM: slow turns produce long,
+     * distinct mechanical clicks (prayer beads through fingers); fast turns
+     * dissolve into a smooth hum as individual clicks merge.
+     */
+    private fun getTickDuration(rpm: Float): Long = when {
+        rpm < 30f -> 8L
+        rpm < 60f -> 5L
+        else -> 3L
+    }
+
+    private fun getTickAmplitudeScale(rpm: Float): Float = when {
+        rpm < 30f -> 1.0f
+        rpm < 60f -> 0.7f
+        else -> 0.45f
     }
 
     private fun triggerHapticPause() {
@@ -2159,9 +2192,63 @@ class WheelViewModel(
         }
     }
 
-    fun triggerMilestoneHaptic() {
-        if (shouldVibrate()) {
-            triggerHaptic(HAPTIC_MILESTONE_DURATION)
+    fun triggerMilestoneHaptic(tier: Int = 0) {
+        if (!shouldVibrate()) return
+        triggerMilestoneHapticInternal(tier.coerceIn(0, 7))
+    }
+
+    /**
+     * Milestone haptic patterns scale with milestone magnitude (tiers 0–7,
+     * matching [audioMilestoneThresholds]: 1K, 10K, 100K, 1M, 10M, 100M, 1B, 1T).
+     *
+     *  tiers 0–1 — acknowledgment : single pulse
+     *  tiers 2–3 — celebration    : double pulse
+     *  tiers 4–5 — resonance      : triple pulse, building
+     *  tiers 6–7 — cosmic moment  : sustained rising waveform
+     */
+    private fun triggerMilestoneHapticInternal(tier: Int) {
+        val intensity = _vibrationIntensity.value
+        fun amp(base: Int) = (base * intensity).toInt().coerceIn(1, 255)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val effect: VibrationEffect = when (tier / 2) {
+                0 -> VibrationEffect.createOneShot(HAPTIC_MILESTONE_DURATION, amp(200))
+                1 -> VibrationEffect.createWaveform(
+                    longArrayOf(0, HAPTIC_MILESTONE_DURATION, 50, HAPTIC_MILESTONE_DURATION),
+                    intArrayOf(0, amp(210), 0, amp(210)),
+                    -1
+                )
+                2 -> VibrationEffect.createWaveform(
+                    longArrayOf(0, HAPTIC_MILESTONE_DURATION, 40, HAPTIC_MILESTONE_DURATION, 40, 30),
+                    intArrayOf(0, amp(210), 0, amp(225), 0, amp(245)),
+                    -1
+                )
+                else -> VibrationEffect.createWaveform(
+                    longArrayOf(0, 30, 60, 40, 60, 50, 80, 80),
+                    intArrayOf(0, amp(150), 0, amp(200), 0, amp(230), 0, amp(255)),
+                    -1
+                )
+            }
+            vibrator.vibrate(effect)
+        } else {
+            val durationMs = when (tier / 2) {
+                0 -> HAPTIC_MILESTONE_DURATION
+                1 -> 90L
+                2 -> 130L
+                else -> 400L
+            }
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(durationMs)
+        }
+    }
+
+    private fun triggerScaledHaptic(durationMs: Long, amplitudeScale: Float) {
+        val intensity = _vibrationIntensity.value
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val amplitude = (255 * amplitudeScale * intensity).toInt().coerceIn(1, 255)
+            vibrator.vibrate(VibrationEffect.createOneShot(durationMs, amplitude))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(durationMs)
         }
     }
 
