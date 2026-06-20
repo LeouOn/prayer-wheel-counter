@@ -1206,7 +1206,7 @@ private fun SideViewPrayerWheel(
     val textMeasurer = rememberTextMeasurer()
 
     // Calculate glow intensity based on angular velocity
-    val glowIntensity = min(1f, abs(angularVelocity) / 10f)
+    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
 
     // Crystal sway based on angular velocity (small oscillation)
     val crystalSway = if (glowIntensity > 0.1f) {
@@ -1701,7 +1701,7 @@ private fun DrawScope.drawCylinderBody(
 ) {
     val cylinderColor = Color(skin.cylinderColor)
     // Dynamic gradient based on speed
-    val speedFactor = min(1f, abs(angularVelocity) / 10f)
+    val speedFactor = min(1f, abs(angularVelocity) / 8f)
     val bodyGradient = Brush.verticalGradient(
         colors = listOf(
             cylinderColor.copy(alpha = 0.8f + 0.1f * speedFactor),
@@ -2103,7 +2103,7 @@ private fun DrawScope.drawRainbowRays(
     angularVelocity: Float,
     radius: Float
 ) {
-    val intensity = (abs(angularVelocity) / 15f).coerceIn(0f, 1f)
+    val intensity = (abs(angularVelocity) / 12f).coerceIn(0f, 1f)
     if (intensity < 0.05f) return
 
     val rainbowColors = listOf(
@@ -2209,13 +2209,16 @@ private fun ViewModeBottomBar(
     modifier: Modifier = Modifier
 ) {
     val viewModes = listOf(
-        ViewMode.SIDE_VIEW to "Side View",
-        ViewMode.TOP_DOWN to "Top Down",
-        ViewMode.ABSTRACT to "Abstract"
+        ViewMode.SIDE_VIEW to "Side",
+        ViewMode.TOP_DOWN to "Top",
+        ViewMode.ABSTRACT to "Abstract",
+        ViewMode.TABLE_TOP to "Table",
+        ViewMode.GLOBE to "Globe"
     )
 
     Row(
         modifier = modifier
+            .horizontalScroll(rememberScrollState())
             .clip(RoundedCornerShape(24.dp))
             .border(
                 width = 1.dp,
@@ -2231,7 +2234,6 @@ private fun ViewModeBottomBar(
             val isSelected = mode == currentMode
             Surface(
                 modifier = Modifier
-                    .weight(1f)
                     .clip(RoundedCornerShape(20.dp))
                     .clickable { onModeSelected(mode) },
                 color = if (isSelected) {
@@ -2377,7 +2379,7 @@ private fun TopDownViewPrayerWheel(
     onPointerCountChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val glowIntensity = min(1f, abs(angularVelocity) / 10f)
+    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
 
     Box(
         modifier = modifier
@@ -2600,7 +2602,7 @@ private fun AbstractViewPrayerWheel(
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
-    val glowIntensity = min(1f, abs(angularVelocity) / 10f)
+    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
 
     // Pulsing glow sync with mantra rhythm
     val infiniteTransition = rememberInfiniteTransition(label = "abstractPulse")
@@ -2977,7 +2979,7 @@ private fun DualWheelsView(
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
-    val glowIntensity = min(1f, abs(angularVelocity) / 10f)
+    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
 
     Box(
         modifier = modifier
@@ -3212,7 +3214,7 @@ private fun TableTopViewPrayerWheel(
     modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
-    val glowIntensity = min(1f, abs(angularVelocity) / 10f)
+    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
 
     Box(
         modifier = modifier
@@ -3321,7 +3323,7 @@ private fun GlobeViewPrayerWheel(
     onPointerCountChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val glowIntensity = min(1f, abs(angularVelocity) / 10f)
+    val glowIntensity = min(1f, abs(angularVelocity) / 8f)
 
     Box(
         modifier = modifier

@@ -83,8 +83,12 @@ class WheelViewModel(
         private const val SESSION_NEW_THRESHOLD_MS = 300000L // 5 minutes
         private const val ANIMATION_FRAME_TIME_MS = 16L
         private const val WIDGET_UPDATE_THROTTLE_MS = 1000L
-        private const val FLICK_VELOCITY_MULTIPLIER = 1.5f
-        private const val MAX_ANGULAR_VELOCITY = 75f
+        // Reduced from 1.5f so flicks don't slam into the lowered velocity cap (12.566 rad/s).
+        // At 1.0f, a typical drag of ~8 rad/s reaches the cap cleanly without an invisible wall.
+        private const val FLICK_VELOCITY_MULTIPLIER = 1.0f
+        // 120 RPM × 2π/60 ≈ 12.566 rad/s — vigorous but meditative devotional cap.
+        // Real prayer wheels spin at 30-100 RPM; the previous 75f (~716 RPM) was frantic.
+        private const val MAX_ANGULAR_VELOCITY = 12.566f
         private const val COUNTER_CLOCKWISE_REMINDER_DELAY_MS = 3000L
         private const val MIN_COUNTER_CLOCKWISE_VELOCITY = 3.0f // rad/s — below this, accidental flicks are ignored
         private const val COUNTER_CLOCKWISE_COOLDOWN_MS = 300_000L // 5 min between reminders
