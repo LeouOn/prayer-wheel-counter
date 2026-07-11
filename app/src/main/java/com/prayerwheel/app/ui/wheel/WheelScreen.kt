@@ -1344,15 +1344,15 @@ private fun SideViewPrayerWheel(
             drawBase(centerX, cylinderTop + cylinderHeight + capHeight * 2 + stemHeight, cylinderWidth * 0.25f, baseHeight, wheelSkin)
 
             // 3. Draw light rays (behind cylinder)
-            val effectiveGlowIntensity = if (sendLightActive) {
+            val rayIntensity = if (sendLightActive) {
                 // Intensified rays for send light animation
                 1f
             } else if (glowIntensity > 0.05f) {
                 glowIntensity
             } else 0f
 
-            if (effectiveGlowIntensity > 0f || sendLightActive) {
-                drawLightRays(centerX, cylinderTop, cylinderWidth, cylinderHeight, effectiveGlowIntensity, rotationAngle, wheelSkin, sendLightActive)
+            if (rayIntensity > 0f || sendLightActive) {
+                drawLightRays(centerX, cylinderTop, cylinderWidth, cylinderHeight, rayIntensity, rotationAngle, wheelSkin, sendLightActive)
             }
 
             // 4. Draw string and weight

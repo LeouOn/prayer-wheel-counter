@@ -68,17 +68,6 @@ object NumberFormatter {
         return NumberFormat.getNumberInstance(Locale.getDefault()).format(number)
     }
 
-    fun getSuffixName(number: BigInteger): String {
-        if (number < BigInteger.valueOf(1000)) return ""
-        var suffixIndex = 0
-        var value = number.toDouble()
-        while (value >= 1000.0 && suffixIndex < suffixes.size - 1) {
-            value /= 1000.0
-            suffixIndex++
-        }
-        return suffixes[suffixIndex]
-    }
-
     private val longFormNames = listOf(
         "", "Thousand", "Million", "Billion", "Trillion",
         "Quadrillion", "Quintillion", "Sextillion", "Septillion", "Octillion",
@@ -125,26 +114,6 @@ object NumberFormatter {
             "${"%.1f".format(doubleVal)} $name"
         } else {
             "${"%.2f".format(doubleVal)} $name"
-        }
-    }
-
-    fun parseShortHand(input: String): BigInteger {
-        val trimmed = input.trim().uppercase(Locale.getDefault())
-        if (trimmed.isEmpty()) return BigInteger.ZERO
-
-        val suffixList = suffixes.drop(1)
-        for ((index, suffix) in suffixList.withIndex()) {
-            if (trimmed.endsWith(suffix)) {
-                val numberPart = trimmed.dropLast(suffix.length).replace(",", "").replace(" ", "")
-                val multiplier = BigInteger.TEN.pow((index + 1) * 3)
-                val baseValue = numberPart.toBigDecimalOrNull() ?: return BigInteger.ZERO
-                return baseValue.multiply(BigDecimal(multiplier)).toBigInteger()
-            }
-        }
-        return try {
-            BigInteger(trimmed.replace(",", "").replace(" ", ""))
-        } catch (e: NumberFormatException) {
-            BigInteger.ZERO
         }
     }
 

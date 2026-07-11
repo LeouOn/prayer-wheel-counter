@@ -48,7 +48,6 @@ import com.prayerwheel.app.ui.components.ShortHandGuideCard
 import com.prayerwheel.app.ui.components.buildCosmicQuantityComparisons
 import com.prayerwheel.app.ui.components.buildCosmicTimeComparisons
 import com.prayerwheel.app.ui.components.buildCrossCulturalTimeComparisons
-import com.prayerwheel.app.ui.components.buildFictionComparisons
 import com.prayerwheel.app.ui.components.buildRateComparison
 import com.prayerwheel.app.ui.components.buildCrossGenerational
 import java.math.BigDecimal
@@ -469,7 +468,8 @@ private fun PersonalCalculator(
                 val verbalMantrasPerDay = verbalMantrasPerHour.toBigDecimal()
                     .multiply(BigDecimal.valueOf(hoursPerDay.toDouble()))
                     .toBigInteger()
-                val verbalMantrasPerYear = verbalMantrasPerDay * BigInteger.valueOf(365)
+                val verbalMantrasPerWeek = verbalMantrasPerDay * BigInteger.valueOf(daysPerWeek.toLong())
+                val verbalMantrasPerYear = verbalMantrasPerWeek * BigInteger.valueOf(52)
                 val combinedPerHour = mantrasPerHour + verbalMantrasPerHour
                 val combinedPerYear = mantrasPerYear + verbalMantrasPerYear
 

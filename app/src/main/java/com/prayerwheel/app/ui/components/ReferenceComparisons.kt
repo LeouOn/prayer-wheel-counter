@@ -109,30 +109,6 @@ fun buildCrossCulturalTimeComparisons(years: BigDecimal): List<String> {
         }
 }
 
-/**
- * Fiction / non-fiction pop-culture comparisons for a mantra total.
- * Includes only comparisons where totalMantras >= the reference value.
- *
- * Tone: respectful, devotional. Avoids mocking references.
- */
-fun buildFictionComparisons(totalMantras: BigInteger): List<String> {
-    data class Ref(val value: BigInteger, val label: String)
-    val refs = listOf(
-        Ref(BigInteger("10000000000"), "the estimated pages in all Hogwarts library books (~10B)"),
-        Ref(BigInteger("30000000000000"), "the souls Dante placed across all circles of the Inferno (~3 × 10^13)"),
-        Ref(BigInteger("1000000000000000000"), "the storage of Foundation's Encyclopedia Galactica (Asimov, ~1Qi entries)"),
-        Ref(CosmicReference.GRAINS_OF_SAND_EARTH, "the grains of sand Slartibartfast shaped into Norwegian fjords (Hitchhiker's Guide)")
-    )
-    return refs
-        .filter { totalMantras >= it.value }
-        .map {
-            val ratio = totalMantras.toBigDecimal()
-                .divide(it.value.toBigDecimal(), 1, RoundingMode.HALF_UP)
-                .stripTrailingZeros()
-            "${ratio.toPlainString()}× ${it.label}"
-        }
-}
-
 // ===== Rate comparisons =====
 
 /**

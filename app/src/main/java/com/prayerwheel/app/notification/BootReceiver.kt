@@ -13,9 +13,7 @@ import android.util.Log
  * practice-reminder the user had scheduled must be rescheduled from persisted
  * preferences once the device finishes booting.
  *
- * The actual rescheduling logic is owned by T7 (ReminderScheduler). Until that
- * task lands, [rescheduleReminders] is a safe no-op stub that cannot crash —
- * see the TODO inside it.
+ * The rescheduling itself is delegated to [ReminderScheduler.rescheduleAllFromPreferences].
  */
 class BootReceiver : BroadcastReceiver() {
 
