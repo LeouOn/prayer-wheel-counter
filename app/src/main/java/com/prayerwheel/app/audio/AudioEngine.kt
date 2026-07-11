@@ -339,11 +339,16 @@ class AudioEngine {
                 track.write(chunk, 0, DRONE_CHUNK_FRAMES, AudioTrack.WRITE_BLOCKING)
             }
         } finally {
-            runCatching {
-                track.stop()
-                track.release()
+            // Guard against the double-release race: stopDroneLoop() may have
+            // already released (and nulled) droneTrack while cancellation was
+            // propagating. Only release here if we still own the same instance.
+            if (droneTrack === track) {
+                runCatching {
+                    track.stop()
+                    track.release()
+                }
+                droneTrack = null
             }
-            droneTrack = null
         }
     }
 
@@ -362,5 +367,15 @@ class AudioEngine {
             }
         }
         droneTrack = null
+    }
+
+    /**
+     * Releases the engine: stops the drone loop and cancels [engineScope] so its
+     * SupervisorJob can no longer leak coroutines after the owning ViewModel is
+     * cleared. Safe to call from the main thread. Idempotent.
+     */
+    fun release() {
+        stopDroneLoop()
+        engineScope.cancel()
     }
 }

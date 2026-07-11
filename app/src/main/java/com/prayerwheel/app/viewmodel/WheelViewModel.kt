@@ -2,6 +2,7 @@ package com.prayerwheel.app.viewmodel
 
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -951,7 +952,7 @@ class WheelViewModel(
         val oldRevolutions = ((totalRotation - angularDiff) / TWO_PI).toLong()
         if (newRevolutions > oldRevolutions) {
             _leftRotationCount.value += (newRevolutions - oldRevolutions)
-            onDualWheelRotationComplete(newRevolutions - oldRevolutions, isLeft = true)
+            onDualWheelRotationComplete(newRevolutions - oldRevolutions)
         }
     }
 
@@ -964,7 +965,7 @@ class WheelViewModel(
         val oldRevolutions = ((totalRotation - angularDiff) / TWO_PI).toLong()
         if (newRevolutions > oldRevolutions) {
             _rightRotationCount.value += (newRevolutions - oldRevolutions)
-            onDualWheelRotationComplete(newRevolutions - oldRevolutions, isLeft = false)
+            onDualWheelRotationComplete(newRevolutions - oldRevolutions)
         }
     }
 
@@ -972,12 +973,8 @@ class WheelViewModel(
      * Handles rotation completion for dual wheel mode.
      * Both wheels contribute to the same session mantras.
      */
-    private fun onDualWheelRotationComplete(count: Long, isLeft: Boolean) {
-        if (isLeft) {
-            currentSessionRotations += count
-        } else {
-            currentSessionRotations += count
-        }
+    private fun onDualWheelRotationComplete(count: Long) {
+        currentSessionRotations += count
         updateSessionMantras()
         triggerHapticTick()
     }
@@ -1080,6 +1077,9 @@ class WheelViewModel(
         stopPhysicsLoop()
         _isPaused.value = true
         triggerHapticPause()
+        // Cancel any deferred session save so it doesn't fire during pause.
+        sessionStopJob?.cancel()
+        sessionStopJob = null
         // Update notification to reflect paused state
         if (notificationActive) {
             SessionNotificationService.update(
@@ -1415,7 +1415,8 @@ class WheelViewModel(
     /**
      * Restores a previously deleted session (undo). Re-inserts and re-adds to lifetime stats.
      */
-    fun undoDeleteSession(session: Session) {        viewModelScope.launch {
+    fun undoDeleteSession(session: Session) {
+        viewModelScope.launch {
             sessionDao.insert(session)
             val sessionDurationSeconds = ((session.endedAt ?: session.startedAt) - session.startedAt) / 1000
             // Hold the mutex across read-modify-write to serialize with other lifetime_stats writers.
@@ -2230,8 +2231,15 @@ class WheelViewModel(
         for (achievement in allAchievements) {
             if (achievement.id !in currentlyUnlocked && totalMantras >= achievement.mantrasRequired) {
                 userPreferences.unlockAchievement(achievement.id)
-                val tier = audioMilestoneThresholds.indexOfFirst { it == achievement.mantrasRequired }
-                    .coerceAtLeast(0)
+                val tierIndex = audioMilestoneThresholds.indexOfFirst { it == achievement.mantrasRequired }
+                if (tierIndex < 0) {
+                    Log.w(
+                        "WheelViewModel",
+                        "Unlocked achievement ${achievement.id} (mantrasRequired=${
+                            achievement.mantrasRequired}) has no matching audio milestone threshold"
+                    )
+                }
+                val tier = tierIndex.coerceIn(0, 7)
                 triggerMilestoneHaptic(tier)
                 _newlyUnlockedAchievement.value = achievement
             }
@@ -2438,6 +2446,7 @@ class WheelViewModel(
         physicsJob?.cancel()
         sessionTimerJob?.cancel()
         audioEngine?.stopDroneLoop()
+        audioEngine?.release()
         breathModeController?.stop()
     }
 

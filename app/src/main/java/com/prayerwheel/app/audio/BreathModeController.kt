@@ -107,6 +107,9 @@ class BreathModeController(
             } catch (e: SecurityException) {
                 // Permission was revoked between check and construct — degrade gracefully.
                 return@launch
+            } catch (e: IllegalStateException) {
+                // OEM edge case: mic is already in use — degrade gracefully.
+                return@launch
             }
 
             if (record.state != AudioRecord.STATE_INITIALIZED) {
