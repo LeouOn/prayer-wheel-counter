@@ -117,6 +117,9 @@ fun PrayerWheelNavHost(
                 },
                 onNavigateToCalculator = {
                     navController.navigate(Screen.Calculator.route)
+                },
+                onNavigateToExport = {
+                    navController.navigate(Screen.Export.route)
                 }
             )
         }

@@ -34,8 +34,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Refresh
@@ -359,7 +359,7 @@ fun WheelScreen(
                             modifier = Modifier.bounceClick()
                         ) {
                             Icon(
-                                imageVector = Icons.Default.DateRange,
+                                imageVector = Icons.Default.Add,
                                 contentDescription = "Calculator"
                             )
                         }
@@ -404,7 +404,7 @@ fun WheelScreen(
                             modifier = Modifier.bounceClick()
                         ) {
                             Icon(
-                                imageVector = Icons.Default.DateRange,
+                                imageVector = Icons.Default.Refresh,
                                 contentDescription = "History"
                             )
                         }

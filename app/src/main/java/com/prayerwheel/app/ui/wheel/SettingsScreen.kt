@@ -96,6 +96,7 @@ fun SettingsScreen(
     sessionDao: SessionDao,
     onNavigateBack: () -> Unit,
     onNavigateToCalculator: () -> Unit,
+    onNavigateToExport: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -603,12 +604,6 @@ fun SettingsScreen(
                         )
                     }
                 )
-
-                // Daily reminder (placeholder)
-                ListItem(
-                    headlineContent = { Text("Daily reminder") },
-                    supportingContent = { Text("Not yet implemented") }
-                )
             }
 
             // PRACTICE RHYTHM SECTION
@@ -968,22 +963,22 @@ fun SettingsScreen(
                     )
                 }
 
-                // Export CSV (placeholder)
+                // Export CSV
                 ListItem(
                     headlineContent = { Text("Export (CSV)") },
-                    modifier = Modifier.clickable { /* Implement file save */ }
+                    modifier = Modifier.clickable { onNavigateToExport() }
                 )
 
-                // Export JSON (placeholder)
+                // Export JSON
                 ListItem(
                     headlineContent = { Text("Export (JSON)") },
-                    modifier = Modifier.clickable { /* Implement file save */ }
+                    modifier = Modifier.clickable { onNavigateToExport() }
                 )
 
-                // Backup (placeholder)
+                // Backup
                 ListItem(
                     headlineContent = { Text("Backup") },
-                    modifier = Modifier.clickable { /* Implement backup */ }
+                    modifier = Modifier.clickable { onNavigateToExport() }
                 )
 
                 // Reset all data

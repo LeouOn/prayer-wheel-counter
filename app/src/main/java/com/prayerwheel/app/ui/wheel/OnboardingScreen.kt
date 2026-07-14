@@ -299,7 +299,7 @@ private fun HowToSpinContent() {
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Three spin modes are available:",
+            text = "Four spin modes are available:",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
             textAlign = TextAlign.Center
@@ -307,9 +307,10 @@ private fun HowToSpinContent() {
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        SpinModeItem("Manual", "Drag to spin")
-        SpinModeItem("Two-Handed", "Two touches required")
-        SpinModeItem("Auto-Spin", "Continuous rotation")
+        SpinModeItem("Manual", "Drag with one finger")
+        SpinModeItem("Two-Handed", "Two fingers for momentum")
+        SpinModeItem("Auto-Spin", "Wheel turns at chosen RPM")
+        SpinModeItem("Breath Mode", "Your breathing drives the wheel")
     }
 }
 
@@ -378,9 +379,10 @@ private fun TrackPracticeContent() {
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
             )
             Text(
-                text = "1 - 108 mantras per rotation",
+                text = "From 1 to over 1 trillion mantras per rotation. Match your physical prayer wheel or explore cosmic-scale accumulation.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                textAlign = TextAlign.Center
             )
         }
 
