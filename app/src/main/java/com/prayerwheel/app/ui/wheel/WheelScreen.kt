@@ -225,6 +225,7 @@ fun WheelScreen(
     val leftRotationAngle by viewModel.leftRotationAngle.collectAsState()
     val rightRotationAngle by viewModel.rightRotationAngle.collectAsState()
     val angularVelocity by viewModel.angularVelocity.collectAsState()
+    val rotationCount by viewModel.rotationCount.collectAsState()
     val sessionMantras by viewModel.sessionMantras.collectAsState()
     val lifetimeMantras by viewModel.lifetimeMantras.collectAsState()
     val mantrasPerRotation by viewModel.mantrasPerRotation.collectAsState()
@@ -273,6 +274,12 @@ fun WheelScreen(
 
     // Star particle spawn counter
     var starSpawnTimer by remember { mutableFloatStateOf(0f) }
+
+    var hasSpunOnce by remember { mutableStateOf(false) }
+    LaunchedEffect(currentRpm, rotationCount) {
+        if (currentRpm > 0f || rotationCount > 0L) hasSpunOnce = true
+    }
+    val showFirstSpinHint = !hasSpunOnce && rotationCount == 0L
 
     // Track pointer count for two-handed mode
     var pointerCount by remember { mutableIntStateOf(0) }
@@ -625,6 +632,15 @@ else {
                         )
                     }
                     }
+                }
+
+                if (showFirstSpinHint) {
+                    Text(
+                        text = "Drag the wheel to begin your practice",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
