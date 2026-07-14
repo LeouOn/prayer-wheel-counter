@@ -714,14 +714,13 @@ private fun SessionCard(
                         }
                     }
                     IconButton(
-                        onClick = onDeleteClick,
-                        modifier = Modifier.size(24.dp)
+                        onClick = onDeleteClick
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,
                             contentDescription = "Delete session",
                             tint = MaterialTheme.colorScheme.error.copy(alpha = 0.6f),
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
