@@ -246,7 +246,7 @@ private fun ColorCircle(
                 .size(24.dp)
                 .clip(CircleShape)
                 .background(color)
-                .border(1.dp, Color.Gray.copy(alpha = 0.3f), CircleShape)
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), CircleShape)
         )
     }
 }
