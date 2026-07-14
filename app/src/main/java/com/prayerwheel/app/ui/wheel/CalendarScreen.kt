@@ -37,6 +37,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
@@ -842,13 +843,13 @@ private fun DayDetailCard(
                                         Spacer(modifier = Modifier.width(6.dp))
                                         IconButton(
                                             onClick = { onDeleteClick(session) },
-                                            modifier = Modifier.size(20.dp)
+                                            modifier = Modifier.minimumInteractiveComponentSize()
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Delete,
                                                 contentDescription = "Delete",
                                                 tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                                                modifier = Modifier.size(14.dp)
+                                                modifier = Modifier.size(18.dp)
                                             )
                                         }
                                     }
