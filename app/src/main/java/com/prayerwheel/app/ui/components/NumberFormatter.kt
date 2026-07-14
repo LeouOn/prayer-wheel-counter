@@ -198,6 +198,22 @@ object NumberFormatter {
         }
     }
 
+    /**
+     * Formats a duration in seconds as a human-readable string.
+     * Examples: 3661 -> "1h 1m", 125 -> "2m 5s", 5 -> "5s", 0 -> "0s".
+     * Canonical format shared across Stats / History / Settings / Calendar screens.
+     */
+    fun formatDuration(seconds: Long): String {
+        val hours = seconds / 3600
+        val minutes = (seconds % 3600) / 60
+        val secs = seconds % 60
+        return when {
+            hours > 0 -> "${hours}h ${minutes}m"
+            minutes > 0 -> "${minutes}m ${secs}s"
+            else -> "${secs}s"
+        }
+    }
+
     fun formatPercent(value: BigInteger, total: BigInteger): String {
         if (total == BigInteger.ZERO) return "0%"
         if (value == BigInteger.ZERO) return "0%"

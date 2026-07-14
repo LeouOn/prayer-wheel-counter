@@ -339,13 +339,29 @@ fun CalendarScreen(
                     fontWeight = FontWeight.Bold
                 )
 
+                TextButton(
+                    onClick = {
+                        val cal = currentMonth.clone() as Calendar
+                        cal.add(Calendar.MONTH, 1)
+                        currentMonth = cal
+                        selectedDay = null
+                    },
+                    enabled = currentMonth.get(Calendar.YEAR) < today.first ||
+                        (currentMonth.get(Calendar.YEAR) == today.first && currentMonth.get(Calendar.MONTH) < today.second)
+                ) {
+                    Text("Next >")
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
                 TextButton(onClick = {
-                    val cal = currentMonth.clone() as Calendar
-                    cal.add(Calendar.MONTH, 1)
-                    currentMonth = cal
+                    currentMonth = Calendar.getInstance()
                     selectedDay = null
                 }) {
-                    Text("Next >")
+                    Text("Today")
                 }
             }
 

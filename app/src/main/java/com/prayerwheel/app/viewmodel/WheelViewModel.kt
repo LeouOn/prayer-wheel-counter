@@ -446,6 +446,19 @@ class WheelViewModel(
     private val _unlockedAchievements = MutableStateFlow<Set<String>>(emptySet())
     val unlockedAchievements: StateFlow<Set<String>> = _unlockedAchievements.asStateFlow()
 
+    /**
+     * Transient error surfaced when a session/lifetime-stats write fails — most
+     * commonly [android.database.sqlite.SQLiteFullException] (disk full).
+     * The UI observes this and shows a brief snackbar; `dismissSaveError()`
+     * clears it after acknowledgment.
+     */
+    private val _saveError = MutableStateFlow<String?>(null)
+    val saveError: StateFlow<String?> = _saveError.asStateFlow()
+
+    fun dismissSaveError() {
+        _saveError.value = null
+    }
+
     private val _newlyUnlockedAchievement = MutableStateFlow<Achievement?>(null)
     val newlyUnlockedAchievement: StateFlow<Achievement?> = _newlyUnlockedAchievement.asStateFlow()
 
@@ -1767,34 +1780,46 @@ class WheelViewModel(
 
     /**
      * Updates lifetime stats by upserting with carried-forward spinning time fields.
+     * SQLiteFullException (disk full) is caught and surfaced via [_saveError]; we
+     * bail before achievements/milestone updates so a write failure does not produce
+     * a misleading tier bump based on stale in-memory state.
      */
     private suspend fun updateLifetimeStats(session: Session) {
         val sessionDurationSeconds = _sessionDurationSeconds.value
-        // Hold the mutex across the read-modify-write so concurrent writers (manual log,
-        // undo-delete, subtract) can't interleave and clobber each other's increment.
-        val newStats = lifetimeStatsMutex.withLock {
-            val existing = lifetimeStatsDao.getStats()
+        val newStats = try {
+            // Hold the mutex across the read-modify-write so concurrent writers (manual log,
+            // undo-delete, subtract) can't interleave and clobber each other's increment.
+            lifetimeStatsMutex.withLock {
+                val existing = lifetimeStatsDao.getStats()
 
-            val updated = existing?.copy(
-                totalRotations = existing.totalRotations + session.rotationCount,
-                totalMantras = existing.totalMantras + session.totalMantras,
-                sessionsCompleted = existing.sessionsCompleted + 1,
-                totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
-                averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                    (existing.totalSpinningTimeSeconds + sessionDurationSeconds) / (existing.sessionsCompleted + 1)
-                } else sessionDurationSeconds
-            ) ?: LifetimeStats(
-                id = 1,
-                totalRotations = session.rotationCount,
-                totalMantras = session.totalMantras,
-                sessionsCompleted = 1,
-                firstSessionAt = session.startedAt,
-                totalSpinningTimeSeconds = sessionDurationSeconds,
-                averageSessionDurationSeconds = sessionDurationSeconds
-            )
+                val updated = existing?.copy(
+                    totalRotations = existing.totalRotations + session.rotationCount,
+                    totalMantras = existing.totalMantras + session.totalMantras,
+                    sessionsCompleted = existing.sessionsCompleted + 1,
+                    totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
+                    averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
+                        (existing.totalSpinningTimeSeconds + sessionDurationSeconds) / (existing.sessionsCompleted + 1)
+                    } else sessionDurationSeconds
+                ) ?: LifetimeStats(
+                    id = 1,
+                    totalRotations = session.rotationCount,
+                    totalMantras = session.totalMantras,
+                    sessionsCompleted = 1,
+                    firstSessionAt = session.startedAt,
+                    totalSpinningTimeSeconds = sessionDurationSeconds,
+                    averageSessionDurationSeconds = sessionDurationSeconds
+                )
 
-            lifetimeStatsDao.upsert(updated)
-            updated
+                lifetimeStatsDao.upsert(updated)
+                updated
+            }
+        } catch (e: android.database.sqlite.SQLiteFullException) {
+            android.util.Log.e("WheelViewModel", "Disk full - session stats not saved", e)
+            _saveError.value = "Storage is full. Unable to save session data. Please free up space."
+            return
+        } catch (e: Exception) {
+            android.util.Log.e("WheelViewModel", "Failed to save session", e)
+            return
         }
         checkAchievements(newStats.totalMantras)
         updateHighestMilestoneTier(newStats.totalMantras)

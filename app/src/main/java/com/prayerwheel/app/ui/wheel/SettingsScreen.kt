@@ -2,6 +2,7 @@ package com.prayerwheel.app.ui.wheel
 
 import android.Manifest
 import android.app.AlarmManager
+import android.text.format.DateFormat
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -1190,7 +1191,7 @@ fun SettingsScreen(
             val timePickerState = rememberTimePickerState(
                 initialHour = initialHour,
                 initialMinute = initialMinute,
-                is24Hour = false
+                is24Hour = DateFormat.is24HourFormat(context)
             )
             AlertDialog(
                 onDismissRequest = { timePickerSlot = null },

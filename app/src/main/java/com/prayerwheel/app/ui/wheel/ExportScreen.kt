@@ -175,7 +175,7 @@ fun ExportScreen(
             }
 
             Text(
-                text = "Backups are saved to your device's Downloads folder as prayer-wheel-backup.json. You can copy this file to keep your practice data safe.",
+                text = "Backups are saved to this app's private storage (Android/data/com.prayerwheel.app/files/Download/) as prayer-wheel-backup.json. You can copy this file to keep your practice data safe.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
             )
@@ -210,7 +210,10 @@ private suspend fun saveBackupToDevice(context: Context, sessions: List<Session>
     return withContext(Dispatchers.IO) {
         try {
             val json = buildJsonContent(sessions)
-            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            // Use app-private external storage (no MANAGE_EXTERNAL_STORAGE permission required on API 29+).
+            // Path: Android/data/com.prayerwheel.app/files/Download/
+            val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                ?: context.filesDir
             if (!downloadsDir.exists()) downloadsDir.mkdirs()
 
             val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())

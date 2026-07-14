@@ -510,20 +510,10 @@ private fun formatBigNumber(mantras: BigInteger): String {
 
 /**
  * Formats a duration in seconds to a readable string.
+ * Delegates to [NumberFormatter.formatDuration] — the canonical helper.
  */
-private fun formatDuration(seconds: Long): String {
-    val days = seconds / 86400
-    val hours = (seconds % 86400) / 3600
-    val minutes = (seconds % 3600) / 60
-
-    return when {
-        days > 0 -> "${days}d ${hours}h"
-        hours > 0 -> "${hours}h ${minutes}m"
-        minutes > 0 -> "${minutes}m"
-        seconds > 0 -> "${seconds}s"
-        else -> "0m"
-    }
-}
+private fun formatDuration(seconds: Long): String =
+    NumberFormatter.formatDuration(seconds)
 
 private fun formatDate(timestamp: Long): String {
     val zoned = Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault())

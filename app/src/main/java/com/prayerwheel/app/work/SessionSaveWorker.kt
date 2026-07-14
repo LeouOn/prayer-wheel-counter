@@ -1,6 +1,7 @@
 package com.prayerwheel.app.work
 
 import android.content.Context
+import android.util.Log
 import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -82,36 +83,47 @@ class SessionSaveWorker(
         val sessionDao = database.sessionDao()
         val lifetimeStatsDao = database.lifetimeStatsDao()
 
-        // Wrap both writes in a single Room transaction. Without this, a crash
-        // between `sessionDao.insert` and `lifetimeStatsDao.upsert` lets
-        // WorkManager retry the worker, re-running `insert` and producing a
-        // duplicate session row. Atomicity here means a failed transaction
-        // leaves nothing inserted, so retries are safe.
-        database.withTransaction {
-            sessionDao.insert(session)
+        try {
+            // Wrap both writes in a single Room transaction. Without this, a crash
+            // between `sessionDao.insert` and `lifetimeStatsDao.upsert` lets
+            // WorkManager retry the worker, re-running `insert` and producing a
+            // duplicate session row. Atomicity here means a failed transaction
+            // leaves nothing inserted, so retries are safe.
+            database.withTransaction {
+                sessionDao.insert(session)
 
-            val existing = lifetimeStatsDao.getStats()
-            val newStats = existing?.copy(
-                totalRotations = existing.totalRotations + session.rotationCount,
-                totalMantras = existing.totalMantras + session.totalMantras,
-                sessionsCompleted = existing.sessionsCompleted + 1,
-                totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
-                averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                    (existing.totalSpinningTimeSeconds + sessionDurationSeconds) /
-                        (existing.sessionsCompleted + 1)
-                } else {
-                    sessionDurationSeconds
-                }
-            ) ?: LifetimeStats(
-                id = 1,
-                totalRotations = session.rotationCount,
-                totalMantras = session.totalMantras,
-                sessionsCompleted = 1,
-                firstSessionAt = session.startedAt,
-                totalSpinningTimeSeconds = sessionDurationSeconds,
-                averageSessionDurationSeconds = sessionDurationSeconds
-            )
-            lifetimeStatsDao.upsert(newStats)
+                val existing = lifetimeStatsDao.getStats()
+                val newStats = existing?.copy(
+                    totalRotations = existing.totalRotations + session.rotationCount,
+                    totalMantras = existing.totalMantras + session.totalMantras,
+                    sessionsCompleted = existing.sessionsCompleted + 1,
+                    totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
+                    averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
+                        (existing.totalSpinningTimeSeconds + sessionDurationSeconds) /
+                            (existing.sessionsCompleted + 1)
+                    } else {
+                        sessionDurationSeconds
+                    }
+                ) ?: LifetimeStats(
+                    id = 1,
+                    totalRotations = session.rotationCount,
+                    totalMantras = session.totalMantras,
+                    sessionsCompleted = 1,
+                    firstSessionAt = session.startedAt,
+                    totalSpinningTimeSeconds = sessionDurationSeconds,
+                    averageSessionDurationSeconds = sessionDurationSeconds
+                )
+                lifetimeStatsDao.upsert(newStats)
+            }
+        } catch (e: android.database.sqlite.SQLiteFullException) {
+            // Disk full — WorkManager's default retry policy would spin forever.
+            // Fail this run so the user gets a real error elsewhere; retries
+            // would not help until the user frees space.
+            Log.e("SessionSaveWorker", "Disk full - session not saved", e)
+            return Result.failure()
+        } catch (e: Exception) {
+            Log.e("SessionSaveWorker", "Failed to save session", e)
+            return Result.failure()
         }
 
         return Result.success()
