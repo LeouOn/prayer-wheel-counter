@@ -60,6 +60,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -85,6 +86,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
@@ -249,6 +251,9 @@ fun WheelScreen(
     val viewMode by viewModel.viewMode.collectAsState()
     val numberFormatStyle by viewModel.numberFormatStyle.collectAsState()
     val starParticles by viewModel.starParticles.collectAsState()
+    val showLiveCounter by viewModel.showLiveCounter.collectAsState()
+    val keepScreenOn by viewModel.keepScreenOn.collectAsState()
+    val bgAnimationIntensity by viewModel.bgAnimationIntensity.collectAsState()
     val newlyUnlockedAchievement by viewModel.newlyUnlockedAchievement.collectAsState()
     val unlockedAchievements by viewModel.unlockedAchievements.collectAsState()
     val savedWheels by viewModel.savedWheels.collectAsState()
@@ -320,13 +325,23 @@ fun WheelScreen(
     val color3 by animateColorAsState(targetColors[2], label = "color3")
 
     Box(modifier = modifier.fillMaxSize()) {
-        // Animated background gradient
+        // Keep screen on during active sessions when the user has opted in
+        val view = LocalView.current
+        val isSessionActive = hasActiveSession && !isPaused
+        DisposableEffect(keepScreenOn, isSessionActive) {
+            view.keepScreenOn = keepScreenOn && isSessionActive
+            onDispose { view.keepScreenOn = false }
+        }
+
+        // Animated background gradient — scaled by bgAnimationIntensity (0=off, 2=full)
         val infiniteTransition = rememberInfiniteTransition(label = "backgroundDrift")
+        val intensityScale = (bgAnimationIntensity / 2f).coerceIn(0f, 1f)
+        val gradientDurationMs = if (intensityScale > 0f) (30000f / intensityScale).toInt() else 30000
         val gradientOffset by infiniteTransition.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 30000, easing = LinearEasing),
+                animation = tween(durationMillis = gradientDurationMs, easing = LinearEasing),
                 repeatMode = RepeatMode.Reverse
             ),
             label = "gradientOffset"
@@ -338,8 +353,8 @@ fun WheelScreen(
                 .background(
                     brush = Brush.linearGradient(
                         colors = listOf(color1, color2, color3),
-                        start = Offset(0f, gradientOffset * 500f),
-                        end = Offset(1000f, 1000f + gradientOffset * 500f)
+                        start = Offset(0f, gradientOffset * 500f * intensityScale),
+                        end = Offset(1000f, 1000f + gradientOffset * 500f * intensityScale)
                     )
                 )
         )
@@ -851,15 +866,17 @@ else {
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // Counter display with RPM (striped coloring for high speed)
-                CounterDisplay(
-                    currentMantraName = currentMantra.displayName,
-                    sessionMantras = sessionMantras,
-                    lifetimeMantras = lifetimeMantras,
-                    currentRpm = currentRpm,
-                    isSpinning = isSpinning,
-                    formatStyle = numberFormatStyle,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                if (showLiveCounter) {
+                    CounterDisplay(
+                        currentMantraName = currentMantra.displayName,
+                        sessionMantras = sessionMantras,
+                        lifetimeMantras = lifetimeMantras,
+                        currentRpm = currentRpm,
+                        isSpinning = isSpinning,
+                        formatStyle = numberFormatStyle,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(32.dp))
 

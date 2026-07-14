@@ -117,6 +117,7 @@ fun SettingsScreen(
     val showCounter by userPreferences.showCounter.collectAsState(initial = true)
     val milestoneNotifications by userPreferences.milestoneNotifications.collectAsState(initial = true)
     val keepScreenOn by userPreferences.keepScreenOn.collectAsState(initial = false)
+    val bgAnimationIntensity by userPreferences.bgAnimationIntensity.collectAsState(initial = UserPreferences.DEFAULT_BG_ANIMATION_INTENSITY)
     val counterClockwiseEnabled by userPreferences.counterClockwiseEnabled.collectAsState(initial = false)
     val customDedication by userPreferences.customDedication.collectAsState(initial = null)
     val sessionTimeGoalSeconds by userPreferences.sessionTimeGoalSeconds.collectAsState(initial = 0L)
@@ -564,12 +565,13 @@ fun SettingsScreen(
 
                 // Show counter
                 ListItem(
-                    headlineContent = { Text("Show counter") },
+                    headlineContent = { Text("Show live counter") },
+                    supportingContent = { Text("Display the mantra counter while spinning. Some practitioners prefer to spin without watching numbers.") },
                     trailingContent = {
                         Switch(
                             checked = showCounter,
                             onCheckedChange = {
-                                scope.launch { userPreferences.setShowCounter(it) }
+                                viewModel.setShowLiveCounter(it)
                             }
                         )
                     }
@@ -861,15 +863,41 @@ fun SettingsScreen(
                 // Keep screen on
                 ListItem(
                     headlineContent = { Text("Keep screen on") },
+                    supportingContent = { Text("Prevent the screen from sleeping during an active practice session") },
                     trailingContent = {
                         Switch(
                             checked = keepScreenOn,
                             onCheckedChange = {
-                                scope.launch { userPreferences.setKeepScreenOn(it) }
+                                viewModel.setKeepScreenOn(it)
                             }
                         )
                     }
                 )
+
+                // Background animation intensity
+                ListItem(
+                    headlineContent = { Text("Background animation") },
+                    supportingContent = { Text("Control the ambient visual effects behind the prayer wheel") }
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(
+                        0 to "Off",
+                        1 to "Subtle",
+                        2 to "Full"
+                    ).forEach { (value, label) ->
+                        val selected = bgAnimationIntensity == value
+                        androidx.compose.material3.FilterChip(
+                            selected = selected,
+                            onClick = { viewModel.setBgAnimationIntensity(value) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
             }
 
             // DATA SECTION

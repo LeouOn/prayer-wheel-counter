@@ -425,6 +425,15 @@ class WheelViewModel(
     private val _highestMilestoneTier = MutableStateFlow(0)
     val highestMilestoneTier: StateFlow<Int> = _highestMilestoneTier.asStateFlow()
 
+    private val _showLiveCounter = MutableStateFlow(true)
+    val showLiveCounter: StateFlow<Boolean> = _showLiveCounter.asStateFlow()
+
+    private val _keepScreenOn = MutableStateFlow(false)
+    val keepScreenOn: StateFlow<Boolean> = _keepScreenOn.asStateFlow()
+
+    private val _bgAnimationIntensity = MutableStateFlow(UserPreferences.DEFAULT_BG_ANIMATION_INTENSITY)
+    val bgAnimationIntensity: StateFlow<Int> = _bgAnimationIntensity.asStateFlow()
+
     private val _isAppInForeground = MutableStateFlow(true)
     val isAppInForeground: StateFlow<Boolean> = _isAppInForeground.asStateFlow()
 
@@ -729,6 +738,21 @@ class WheelViewModel(
                 } else {
                     breathModeController?.stop()
                 }
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.showCounter.collect { enabled ->
+                _showLiveCounter.value = enabled
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.keepScreenOn.collect { enabled ->
+                _keepScreenOn.value = enabled
+            }
+        }
+        viewModelScope.launch {
+            userPreferences.bgAnimationIntensity.collect { intensity ->
+                _bgAnimationIntensity.value = intensity
             }
         }
 
@@ -1973,7 +1997,12 @@ class WheelViewModel(
                 val velocity = abs(_angularVelocity.value)
                 if (velocity > STOP_THRESHOLD && canvasWidth > 0 && canvasHeight > 0) {
                     val spawnProbability = tieredParticleSpawnProbability(velocity)
-                    if (Math.random() < spawnProbability && currentParticles.size < 40) {
+                    // Scale spawn by background animation intensity (0=off, 1=subtle, 2=full).
+                    // Off => 0 spawns; subtle => 0.15x; full => 1.0x.
+                    val intensityScale = _bgAnimationIntensity.value / 2f
+                    if (intensityScale > 0f &&
+                        Math.random() < spawnProbability * intensityScale &&
+                        currentParticles.size < 40) {
                         currentParticles.add(
                             StarParticle(
                                 id = nextParticleId++,
@@ -2060,8 +2089,8 @@ class WheelViewModel(
             checkAchievements(newTotalMantras)
         }
 
-        // Spawn rotation completion particles
-        if (canvasWidth > 0 && canvasHeight > 0) {
+        // Spawn rotation completion particles (gated by bg animation intensity)
+        if (canvasWidth > 0 && canvasHeight > 0 && _bgAnimationIntensity.value > 0) {
             val newParticles = mutableListOf<StarParticle>()
             for (i in 0 until 5) {
                 newParticles.add(
@@ -2391,6 +2420,28 @@ class WheelViewModel(
         _vibrationIntensity.value = intensity
         viewModelScope.launch {
             userPreferences.setVibrationIntensity(intensity)
+        }
+    }
+
+    fun setShowLiveCounter(enabled: Boolean) {
+        _showLiveCounter.value = enabled
+        viewModelScope.launch {
+            userPreferences.setShowCounter(enabled)
+        }
+    }
+
+    fun setKeepScreenOn(enabled: Boolean) {
+        _keepScreenOn.value = enabled
+        viewModelScope.launch {
+            userPreferences.setKeepScreenOn(enabled)
+        }
+    }
+
+    fun setBgAnimationIntensity(intensity: Int) {
+        val coerced = intensity.coerceIn(0, 2)
+        _bgAnimationIntensity.value = coerced
+        viewModelScope.launch {
+            userPreferences.setBgAnimationIntensity(coerced)
         }
     }
 

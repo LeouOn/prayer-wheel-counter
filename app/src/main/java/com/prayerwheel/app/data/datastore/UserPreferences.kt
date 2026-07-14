@@ -127,6 +127,7 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         val WHEEL_MASS = floatPreferencesKey("wheel_mass")
         val JE_NYER_ENABLED = booleanPreferencesKey("je_nyer_enabled")
         val BREATH_MODE_ENABLED = booleanPreferencesKey("breath_mode_enabled")
+        val BG_ANIMATION_INTENSITY = intPreferencesKey("bg_animation_intensity")
     }
 
     val selectedMantra: Flow<String> = dataStore.data.map { preferences ->
@@ -356,6 +357,17 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
      */
     val breathModeEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[Keys.BREATH_MODE_ENABLED] ?: false
+    }
+
+    /**
+     * Background animation intensity for the wheel screen ambient effects.
+     * 0 = off (static background, no particles, no gradient drift),
+     * 1 = subtle (reduced particles, slower drift, dimmer glow),
+     * 2 = full (current rich experience). Defaults to 2.
+     */
+    val bgAnimationIntensity: Flow<Int> = dataStore.data.map { preferences ->
+        (preferences[Keys.BG_ANIMATION_INTENSITY] ?: DEFAULT_BG_ANIMATION_INTENSITY)
+            .coerceIn(0, 2)
     }
 
     suspend fun setSelectedMantra(mantra: String) {
@@ -687,6 +699,12 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
+    suspend fun setBgAnimationIntensity(intensity: Int) {
+        dataStore.edit { preferences ->
+            preferences[Keys.BG_ANIMATION_INTENSITY] = intensity.coerceIn(0, 2)
+        }
+    }
+
     private fun parseSavedWheelsJson(jsonString: String): List<SavedWheel> {
         return try {
             val jsonArray = JSONArray(jsonString)
@@ -737,6 +755,7 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         const val DEFAULT_FRICTION = 0.97f
         const val DEFAULT_HAPTIC_ENABLED = true
         const val DEFAULT_WHEEL_MASS = 1.0f
+        const val DEFAULT_BG_ANIMATION_INTENSITY = 2
         
         const val DEFAULT_DEDICATION_TEXT = "May the merit accumulated through this practice benefit all sentient beings, that they may realize the nature of Buddha's wisdom and be freed from samsara."
 
