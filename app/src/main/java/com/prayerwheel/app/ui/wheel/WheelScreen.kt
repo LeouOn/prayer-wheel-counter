@@ -3265,8 +3265,7 @@ private fun CounterClockwiseReminderBanner(
                 modifier = Modifier.weight(1f)
             )
             IconButton(
-                onClick = onDismiss,
-                modifier = Modifier.size(24.dp)
+                onClick = onDismiss
             ) {
                 Icon(
                     imageVector = Icons.Default.Close,
