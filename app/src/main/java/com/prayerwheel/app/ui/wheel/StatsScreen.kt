@@ -152,11 +152,22 @@ fun StatsScreen(
             // Per-mantra cards
             if (mantraStats.isEmpty()) {
                 item {
-                    Text(
-                        text = "No practice sessions recorded yet.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-                    )
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "No practice sessions yet",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "Your sessions and lifetime stats will appear here once you start spinning.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             } else {
                 items(mantraStats) { stats ->
