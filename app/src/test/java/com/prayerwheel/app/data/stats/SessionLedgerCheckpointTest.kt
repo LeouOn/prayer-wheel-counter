@@ -190,7 +190,7 @@ class SessionLedgerCheckpointTest {
     @Test
     fun resetAll_clearsCheckpoints() = runBlocking {
         store.upsertCheckpoint(checkpoint())
-        SessionLedger.resetAll(store)
+        SessionLedger.resetAll(store, TEST_NOW)
         assertTrue(store.checkpoints.isEmpty())
         assertTrue(SessionLedger.recoverCheckpoints(store, TEST_NOW).isEmpty())
     }

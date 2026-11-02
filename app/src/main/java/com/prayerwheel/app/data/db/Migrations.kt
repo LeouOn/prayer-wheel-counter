@@ -28,6 +28,8 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
  *    credited vs. when lifetime totals were last reset, so deleting a session
  *    recorded before a reset doesn't debit the new totals. NULL for existing
  *    rows.
+ *  - `lifetime_stats.wiped_at`: time of the last "Reset All Data"; stale
+ *    live-session snapshots from before it are dropped when they arrive.
  *  - v4 already had "Reset lifetime stats" but recorded no timestamp. If a
  *    reset evidently happened (lifetime row says fewer sessions than exist,
  *    or firstSessionAt was nulled, or the row is missing while sessions
@@ -42,6 +44,7 @@ internal val MIGRATION_4_5_SQL = listOf(
     "CREATE UNIQUE INDEX IF NOT EXISTS `index_sessions_session_key` ON `sessions` (`session_key`)",
     "ALTER TABLE `sessions` ADD COLUMN `recorded_at` INTEGER",
     "ALTER TABLE `lifetime_stats` ADD COLUMN `reset_at` INTEGER",
+    "ALTER TABLE `lifetime_stats` ADD COLUMN `wiped_at` INTEGER",
     "CREATE TABLE IF NOT EXISTS `active_session` (`sessionKey` TEXT NOT NULL, " +
         "`startedAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `rotationCount` INTEGER NOT NULL, " +
         "`mantrasPerRotation` INTEGER NOT NULL, `totalMantras` TEXT NOT NULL, `mantraId` TEXT NOT NULL, " +

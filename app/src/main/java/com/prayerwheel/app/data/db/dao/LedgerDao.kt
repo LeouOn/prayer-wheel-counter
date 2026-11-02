@@ -105,5 +105,5 @@ abstract class LedgerDao : SessionLedgerStore {
 
     @Transaction
     open suspend fun resetAll() =
-        SessionLedger.resetAll(this)
+        SessionLedger.resetAll(this, System.currentTimeMillis())
 }
