@@ -93,6 +93,10 @@ abstract class LedgerDao : SessionLedgerStore {
         SessionLedger.ensureSessionKey(this, id, newKey)
 
     @Transaction
+    open suspend fun prepareResume(id: Long, newKey: String): Session? =
+        SessionLedger.prepareResume(this, id, newKey, System.currentTimeMillis())
+
+    @Transaction
     open suspend fun recoverCheckpoints(): List<SessionLedger.Recorded> =
         SessionLedger.recoverCheckpoints(this, System.currentTimeMillis())
 

@@ -124,6 +124,14 @@ object SessionRules {
     fun sessionMantras(rotations: Long, mantrasPerRotation: Long): BigInteger =
         BigInteger.valueOf(rotations).multiply(BigInteger.valueOf(mantrasPerRotation))
 
+    /**
+     * Whether offering/performing a resume of a saved session with
+     * [offeredKey] makes sense: never while a session is live or awaiting its
+     * dedication, and never for the session that is already live.
+     */
+    fun canOfferResume(offeredKey: String?, liveKey: String?, hasLiveSession: Boolean): Boolean =
+        !hasLiveSession && (offeredKey == null || offeredKey != liveKey)
+
     /** Local hour-of-day (0..23) of [epochMillis] in [zone]. */
     fun hourOfDay(epochMillis: Long, zone: ZoneId): Int =
         Instant.ofEpochMilli(epochMillis).atZone(zone).hour

@@ -102,6 +102,8 @@ class WheelViewModel(
         private const val HAPTIC_SLIDER_DURATION = 3L
         private const val SESSION_TIMER_INTERVAL_MS = 1000L
         private const val DAY_WINDOW_REFRESH_MS = 60_000L
+        /** How long Resume waits for a previous process's queued save of that session. */
+        private const val RESUME_WORKER_WAIT_MS = 10_000L
 
         // Breath-mode physics constants live in [SpinPhysics]; this alias keeps the
         // physics-loop keep-alive condition readable.
@@ -443,6 +445,19 @@ class WheelViewModel(
 
     fun dismissSaveError() {
         _saveError.value = null
+    }
+
+    /**
+     * T17 resume offer: the most recent interrupted session, computed once per
+     * ViewModel (after checkpoint recovery) and cleared when it is resumed,
+     * dismissed, or any session starts. Never re-derived from UI state.
+     */
+    private val _resumableSession = MutableStateFlow<Session?>(null)
+    val resumableSession: StateFlow<Session?> = _resumableSession.asStateFlow()
+    private var resumeInProgress = false
+
+    fun dismissResumeOffer() {
+        _resumableSession.value = null
     }
 
     private val _newlyUnlockedAchievement = MutableStateFlow<Achievement?>(null)
@@ -811,8 +826,23 @@ class WheelViewModel(
         }
         breathModeController = BreathModeController(appContext, viewModelScope)
         recoverInterruptedSessions()
+        offerResumableSession()
         observeTodayProgress()
         loadLifetimeStats()
+    }
+
+    /**
+     * Computes the one-shot resume offer once, after checkpoint recovery, and
+     * only if no session is live or awaiting its dedication by then.
+     */
+    private fun offerResumableSession() {
+        viewModelScope.launch {
+            val candidate = detectResumableSession() ?: return@launch
+            val live = sessionStartTime != null || pendingDedicationSession != null
+            if (SessionRules.canOfferResume(candidate.sessionKey, sessionKey, live)) {
+                _resumableSession.value = candidate
+            }
+        }
     }
 
     /**
@@ -1635,7 +1665,7 @@ class WheelViewModel(
      *  - had motion: `rotationCount > 0`
      *  - interrupted: `dedication == null` (a normally-ended session is not resumable)
      */
-    suspend fun detectResumableSession(): Session? {
+    private suspend fun detectResumableSession(): Session? {
         // A session recovered from a checkpoint is the one to offer.
         recoveryJob?.join()
         val recent = sessionDao.getMostRecentSession() ?: return null
@@ -1659,58 +1689,89 @@ class WheelViewModel(
      *
      * Does NOT restore transient physics state (angularVelocity, drag history).
      */
-    fun resumeFromSession(session: Session) {
+    fun resumeFromSession(offered: Session) {
+        _resumableSession.value = null
+        if (resumeInProgress) return
+        if (!SessionRules.canOfferResume(offered.sessionKey, sessionKey, hasLiveSession = false)) return
+        resumeInProgress = true
         if (sessionStartTime != null && currentSessionRotations > 0L) {
             recordLiveSessionWithoutPrompt()
         }
         viewModelScope.launch {
-            val key = if (session.id != 0L) {
-                durableWrite("resumed session") {
-                    ledgerDao.ensureSessionKey(session.id, java.util.UUID.randomUUID().toString())
+            try {
+                // A save queued by a previous process for this session must land
+                // first, or its counts would be overtaken by the resumed live ones.
+                val pendingKey = offered.sessionKey
+                if (pendingKey != null &&
+                    !SessionSaveWorker.awaitPending(appContext, pendingKey, RESUME_WORKER_WAIT_MS)
+                ) {
+                    _saveError.value = "Still saving that session. Please try Resume again in a moment."
+                    return@launch
                 }
-            } else null
-            // Row gone (deleted meanwhile) or the write failed: continue under a
-            // key of its own; the save will then insert it as a new session.
-            sessionKey = key ?: session.sessionKey ?: java.util.UUID.randomUUID().toString()
-
-            // Mirror startSessionIfNeeded() restoration, but preserve the
-            // accumulated rotations/start time instead of zeroing them.
-            sessionStartTime = session.startedAt
-            currentSessionRotations = session.rotationCount
-            // The resumed session keeps its own capacity/mantra/wheel for its whole
-            // life (never the current selection), and the wheel screen switches to
-            // it so further rotations visibly count at that capacity.
-            sessionPricing = SessionRules.SessionPricing(session.mantrasPerRotation, session.mantraId, session.wheelId)
-            currentSessionMantras = SessionRules.sessionMantras(session.rotationCount, session.mantrasPerRotation)
-            showSessionPricingAsSelection(session)
-            _rotationCount.value = session.rotationCount
-            _sessionMantras.value = currentSessionMantras
-            _hasActiveSession.value = true
-            _isPaused.value = false
-            _peakRpm.value = session.peakRpm
-            _averageRpm.value = session.averageRpm
-            // Transient RPM samples are not persisted — reset so the running
-            // average re-converges from zero rather than from stale state.
-            rpmSampleCount = 0
-            sessionStartRpmSum = 0f
-            // Continue from the recorded practice time, not from startedAt: the
-            // gap between the original end and now was not practice.
-            val now = System.currentTimeMillis()
-            val timerBase = SessionRules.resumeTimerBase(now, LifetimeStatsMath.storedDurationSeconds(session))
-            sessionTimerBase = timerBase
-            _sessionDuration.value = now - timerBase
-            _sessionDurationSeconds.value = (now - timerBase) / 1000
-            pendingSessionLabel = session.label
-
-            startNotificationService()
-
-            // Restart the session timer (mirrors startSessionIfNeeded). The
-            // timeGoalReached flag is pre-set when the resumed session already
-            // meets the goal so we don't immediately fire the milestone haptic.
-            startSessionTimer(timerBase, skipGoalIfAlreadyMet = true)
-            startCheckpointing()
-            checkpointNow()
+                // Restore from the row as it is NOW (plus any newer checkpoint),
+                // never from the offered copy, which may be stale.
+                val row = durableWrite("resumed session") {
+                    checkpointMutex.withLock {
+                        ledgerDao.prepareResume(offered.id, java.util.UUID.randomUUID().toString())
+                    }
+                }
+                if (row == null) {
+                    if (_saveError.value == null) _saveError.value = "That session can no longer be resumed."
+                    return@launch
+                }
+                if (row.sessionKey == sessionKey) return@launch // already live
+                // The user may have started spinning while we waited: keep that.
+                if (sessionStartTime != null) {
+                    if (currentSessionRotations > 0L) recordLiveSessionWithoutPrompt() else resetSessionState()
+                }
+                restoreLiveSession(row)
+            } finally {
+                resumeInProgress = false
+            }
         }
+    }
+
+    /** Makes [session] (a freshly read row with a session key) the live session. */
+    private fun restoreLiveSession(session: Session) {
+        sessionKey = session.sessionKey ?: java.util.UUID.randomUUID().toString()
+
+        // Mirror startSessionIfNeeded() restoration, but preserve the
+        // accumulated rotations/start time instead of zeroing them.
+        sessionStartTime = session.startedAt
+        currentSessionRotations = session.rotationCount
+        // The resumed session keeps its own capacity/mantra/wheel for its whole
+        // life (never the current selection), and the wheel screen switches to
+        // it so further rotations visibly count at that capacity.
+        sessionPricing = SessionRules.SessionPricing(session.mantrasPerRotation, session.mantraId, session.wheelId)
+        currentSessionMantras = SessionRules.sessionMantras(session.rotationCount, session.mantrasPerRotation)
+        showSessionPricingAsSelection(session)
+        _rotationCount.value = session.rotationCount
+        _sessionMantras.value = currentSessionMantras
+        _hasActiveSession.value = true
+        _isPaused.value = false
+        _peakRpm.value = session.peakRpm
+        _averageRpm.value = session.averageRpm
+        // Transient RPM samples are not persisted — reset so the running
+        // average re-converges from zero rather than from stale state.
+        rpmSampleCount = 0
+        sessionStartRpmSum = 0f
+        // Continue from the recorded practice time, not from startedAt: the
+        // gap between the original end and now was not practice.
+        val now = System.currentTimeMillis()
+        val timerBase = SessionRules.resumeTimerBase(now, LifetimeStatsMath.storedDurationSeconds(session))
+        sessionTimerBase = timerBase
+        _sessionDuration.value = now - timerBase
+        _sessionDurationSeconds.value = (now - timerBase) / 1000
+        pendingSessionLabel = session.label
+
+        startNotificationService()
+
+        // Restart the session timer (mirrors startSessionIfNeeded). The
+        // timeGoalReached flag is pre-set when the resumed session already
+        // meets the goal so we don't immediately fire the milestone haptic.
+        startSessionTimer(timerBase, skipGoalIfAlreadyMet = true)
+        startCheckpointing()
+        checkpointNow()
     }
 
     /** Shows the resumed session's own wheel (capacity/mantra/wheel) as the current selection. */
@@ -1821,6 +1882,8 @@ class WheelViewModel(
     private fun startSessionIfNeeded() {
         val now = System.currentTimeMillis()
         if (SessionRules.needsNewSession(sessionStartTime)) {
+            // A session is live now: don't offer to resume another one.
+            _resumableSession.value = null
             sessionStartTime = now
             sessionTimerBase = now
             sessionPricing = null // captured from the selection at the first rotation
@@ -2446,7 +2509,25 @@ class WheelViewModel(
         // launch's recovery) records it; both upsert by sessionKey, so whichever
         // runs second is a no-op or a newer-snapshot replace — never a double count.
         val snapshot = createSessionFromCurrentState()
+        // Also persist the final snapshot as a checkpoint right away (the process
+        // normally outlives the VM briefly), so a later resume/recovery sees the
+        // newest counts even before the worker runs.
+        val finalCheckpoint = buildCheckpoint()
         sessionKey = null // stop any in-flight checkpoint write for this session
+        if (finalCheckpoint != null) {
+            appScope.launch {
+                recoveryJob?.join()
+                checkpointMutex.withLock {
+                    try {
+                        ledgerDao.saveCheckpoint(finalCheckpoint)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w("WheelViewModel", "Final checkpoint write failed", e)
+                    }
+                }
+            }
+        }
         if (snapshot != null) {
             SessionSaveWorker.enqueue(
                 context = appContext,

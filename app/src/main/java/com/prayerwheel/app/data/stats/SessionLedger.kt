@@ -246,6 +246,25 @@ object SessionLedger {
     }
 
     /**
+     * Prepares row [id] for resuming and returns its CURRENT state (never a
+     * caller-held copy, which may be stale): assigns a session key if the row
+     * predates keys, then folds in a newer checkpoint for that key if one
+     * exists (recording it in place), and re-reads the row. Null if the row
+     * no longer exists.
+     */
+    suspend fun prepareResume(store: SessionLedgerStore, id: Long, newKey: String, nowMs: Long): Session? {
+        val key = ensureSessionKey(store, id, newKey) ?: return null
+        store.getCheckpoints().firstOrNull { it.sessionKey == key }?.let { checkpoint ->
+            if (checkpoint.rotationCount > 0L) {
+                recordSession(store, checkpoint.toSession(), checkpoint.durationSeconds, nowMs)
+            } else {
+                store.deleteCheckpointByKey(key)
+            }
+        }
+        return store.getSessionById(id)
+    }
+
+    /**
      * Records every leftover `active_session` checkpoint (the app died while a
      * session was live) as a completed session with no dedication, crediting
      * the live-timer duration it carried, and clears them. Upserting by key
