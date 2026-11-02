@@ -11,7 +11,6 @@ import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import com.prayerwheel.app.PrayerWheelApp
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import java.util.Calendar
 
 /**
@@ -110,21 +109,19 @@ object EndOfDayScheduler {
 
     /**
      * Read the end-of-day reminder preferences and either schedule or cancel
-     * the alarm to match. Safe to call from a BroadcastReceiver: the DataStore
-     * reads are local and fast, wrapped in [runBlocking].
+     * the alarm to match. Called from receivers inside a goAsync coroutine, so
+     * the DataStore reads suspend off the main thread.
      */
-    fun rescheduleFromPreferences(context: Context) {
+    suspend fun rescheduleFromPreferences(context: Context) {
         val prefs = (context.applicationContext as PrayerWheelApp).userPreferences
-        runBlocking {
-            val enabled = prefs.reminderEndOfDayEnabled.first()
-            if (!enabled) {
-                cancelEndOfDaySummary(context)
-                return@runBlocking
-            }
-            val hour = prefs.reminderEndOfDayHour.first()
-            val minute = prefs.reminderEndOfDayMinute.first()
-            scheduleEndOfDaySummary(context, hour, minute)
+        val enabled = prefs.reminderEndOfDayEnabled.first()
+        if (!enabled) {
+            cancelEndOfDaySummary(context)
+            return
         }
+        val hour = prefs.reminderEndOfDayHour.first()
+        val minute = prefs.reminderEndOfDayMinute.first()
+        scheduleEndOfDaySummary(context, hour, minute)
     }
 
     private fun pendingIntent(context: Context): PendingIntent {

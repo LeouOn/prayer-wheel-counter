@@ -10,7 +10,6 @@ import androidx.core.app.NotificationManagerCompat
 import com.prayerwheel.app.PrayerWheelApp
 import com.prayerwheel.app.data.model.Session
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import java.math.BigInteger
 import java.util.Calendar
 
@@ -41,43 +40,35 @@ class EndOfDayReceiver : BroadcastReceiver() {
         if (context == null || intent == null) return
         val action = intent.action ?: return
 
-        // Both branches below read from DataStore via runBlocking (boot path
-        // via rescheduleFromPreferences; summary path via handleEndOfDaySummary's
-        // session/Flow reads). On first boot after install there is no
-        // in-memory cache, so a synchronous read on the main thread risks an
-        // ANR. Move the entire body off main via goAsync(); the system keeps
-        // the broadcast alive (~10s budget) until finish() is called.
-        val pendingResult = goAsync()
-        Thread {
-            try {
-                when (action) {
-                    Intent.ACTION_BOOT_COMPLETED -> {
-                        runCatching {
-                            EndOfDayScheduler.rescheduleFromPreferences(context)
-                        }.onFailure { e ->
-                            Log.e(TAG, "Failed to reschedule end-of-day alarm on boot", e)
-                        }
-                    }
-
-                    EndOfDayScheduler.ACTION_END_OF_DAY_SUMMARY -> {
-                        runCatching {
-                            handleEndOfDaySummary(context)
-                        }.onFailure { e ->
-                            Log.e(TAG, "Failed to handle end-of-day summary", e)
-                        }
-                        // Always re-arm tomorrow, even if this fire failed or the user
-                        // did not practice, so the reminder never silently disappears.
-                        runCatching {
-                            EndOfDayScheduler.rescheduleFromPreferences(context)
-                        }.onFailure { e ->
-                            Log.e(TAG, "Failed to reschedule next end-of-day alarm", e)
-                        }
+        // Both branches below read from DataStore / Room. Run them off the main
+        // thread via goAsync plus a short, time-bounded coroutine so a cold
+        // DataStore read after boot cannot cause an ANR.
+        runAsync(TAG) {
+            when (action) {
+                Intent.ACTION_BOOT_COMPLETED -> {
+                    runCatching {
+                        EndOfDayScheduler.rescheduleFromPreferences(context)
+                    }.onFailure { e ->
+                        Log.e(TAG, "Failed to reschedule end-of-day alarm on boot", e)
                     }
                 }
-            } finally {
-                pendingResult.finish()
+
+                EndOfDayScheduler.ACTION_END_OF_DAY_SUMMARY -> {
+                    runCatching {
+                        handleEndOfDaySummary(context)
+                    }.onFailure { e ->
+                        Log.e(TAG, "Failed to handle end-of-day summary", e)
+                    }
+                    // Always re-arm tomorrow, even if this fire failed or the user
+                    // did not practice, so the reminder never silently disappears.
+                    runCatching {
+                        EndOfDayScheduler.rescheduleFromPreferences(context)
+                    }.onFailure { e ->
+                        Log.e(TAG, "Failed to reschedule next end-of-day alarm", e)
+                    }
+                }
             }
-        }.start()
+        }
     }
 
     /**
@@ -86,22 +77,20 @@ class EndOfDayReceiver : BroadcastReceiver() {
      * CRITICAL: when there are no sessions today, this method returns without
      * posting anything. No nagging, ever.
      */
-    private fun handleEndOfDaySummary(context: Context) {
+    private suspend fun handleEndOfDaySummary(context: Context) {
         val app = context.applicationContext as PrayerWheelApp
         val prefs = app.userPreferences
 
         val (startOfDay, startOfNextDay) = todayBounds()
 
-        val sessions: List<Session> = runBlocking {
-            app.database.sessionDao()
-                .getSessionsBetween(startOfDay, startOfNextDay)
-                .first()
-        }
+        val sessions: List<Session> = app.database.sessionDao()
+            .getSessionsBetween(startOfDay, startOfNextDay)
+            .first()
 
         // CRITICAL: silent when no practice today.
         if (sessions.isEmpty()) return
 
-        val eveningHour = runBlocking { prefs.reminderEveningHour.first() }
+        val eveningHour = prefs.reminderEveningHour.first()
         val body = composeBody(sessions, eveningHour)
 
         postNotification(context, body)
