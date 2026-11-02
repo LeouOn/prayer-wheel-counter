@@ -32,15 +32,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.prayerwheel.app.R
 import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.ui.components.NumberFormatter
 import com.prayerwheel.app.ui.theme.StarGold
+import com.prayerwheel.app.ui.theme.TibetanFont
 import kotlinx.coroutines.launch
 import java.math.BigInteger
 
@@ -117,7 +115,7 @@ fun DedicationScreen(
                 if (showRejoiceSection) {
                     Text(
                         text = JE_NYER_TIBETAN,
-                        fontFamily = FontFamily(Font(R.font.noto_sans_tibetan)),
+                        fontFamily = TibetanFont,
                         style = MaterialTheme.typography.titleLarge.copy(textAlign = TextAlign.Center),
                         color = MaterialTheme.colorScheme.onSurface
                     )
