@@ -10,6 +10,9 @@ import androidx.navigation.compose.composable
 import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.data.db.dao.LifetimeStatsDao
 import com.prayerwheel.app.data.db.dao.SessionDao
+import com.prayerwheel.app.data.db.dao.getMantraStats
+import com.prayerwheel.app.data.db.dao.getStatsSince
+import com.prayerwheel.app.data.db.dao.getWheelStats
 import com.prayerwheel.app.ui.wheel.HistoryScreen
 import com.prayerwheel.app.ui.wheel.OnboardingScreen
 import com.prayerwheel.app.ui.wheel.SettingsScreen

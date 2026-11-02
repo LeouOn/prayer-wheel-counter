@@ -7,7 +7,12 @@ import androidx.room.Query
 import androidx.room.Update
 import com.prayerwheel.app.data.model.MantraStats
 import com.prayerwheel.app.data.model.Session
+import com.prayerwheel.app.data.model.WheelStats
+import com.prayerwheel.app.data.stats.SessionAggregateRow
+import com.prayerwheel.app.data.stats.SessionAggregates
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import java.math.BigInteger
 
 /**
  * Data access object for prayer wheel sessions.
@@ -52,32 +57,20 @@ interface SessionDao {
     @Query("SELECT COUNT(*) FROM sessions")
     suspend fun getSessionCount(): Int
 
-    @Query("SELECT SUM(totalMantras) FROM sessions")
-    suspend fun getTotalMantrasFromSessions(): Long?
-
-    @Query("SELECT SUM(rotationCount) FROM sessions")
-    suspend fun getTotalRotationsFromSessions(): Long?
-
     @Query("DELETE FROM sessions WHERE id = :id")
     suspend fun deleteSessionById(id: Long)
 
     @Query("DELETE FROM sessions")
     suspend fun deleteAll()
 
-    @Query("SELECT mantraId, COUNT(*) as sessionCount, SUM(rotationCount) as totalRotations, SUM(totalMantras) as totalMantras FROM sessions GROUP BY mantraId")
-    fun getMantraStats(): Flow<List<MantraStats>>
-
-    @Query("SELECT mantraId, COUNT(*) as sessionCount, SUM(rotationCount) as totalRotations, SUM(totalMantras) as totalMantras FROM sessions WHERE startedAt >= :sinceTimestamp GROUP BY mantraId")
-    fun getMantraStatsSince(sinceTimestamp: Long): Flow<List<MantraStats>>
-
-    @Query("SELECT wheel_id as wheelId, COUNT(*) as sessionCount, SUM(rotationCount) as totalRotations, SUM(totalMantras) as totalMantras FROM sessions GROUP BY wheel_id")
-    fun getWheelStats(): Flow<List<com.prayerwheel.app.data.model.WheelStats>>
-
-    @Query("SELECT wheel_id as wheelId, COUNT(*) as sessionCount, SUM(rotationCount) as totalRotations, SUM(totalMantras) as totalMantras FROM sessions WHERE startedAt >= :sinceTimestamp GROUP BY wheel_id")
-    fun getWheelStatsSince(sinceTimestamp: Long): Flow<List<com.prayerwheel.app.data.model.WheelStats>>
-
-    @Query("SELECT COUNT(*) as sessionCount, SUM(totalMantras) as totalMantras FROM sessions WHERE startedAt >= :sinceTimestamp")
-    fun getStatsSince(sinceTimestamp: Long): Flow<TimeStats?>
+    /**
+     * Per-session columns for the Stats aggregates. Summed in Kotlin with
+     * BigInteger ([SessionAggregates]) — never with SQL SUM(), which overflows
+     * INT64 on BigInteger-as-TEXT mantra totals. Use the extension functions
+     * below ([getMantraStats], [getWheelStats], [getStatsSince], ...).
+     */
+    @Query("SELECT mantraId, wheel_id AS wheelId, rotationCount, totalMantras FROM sessions WHERE startedAt >= :sinceTimestamp")
+    fun observeAggregateRowsSince(sinceTimestamp: Long): Flow<List<SessionAggregateRow>>
 
     @Query("SELECT * FROM sessions WHERE startedAt >= :sinceTimestamp ORDER BY startedAt DESC")
     fun getSessionsSince(sinceTimestamp: Long): Flow<List<Session>>
@@ -97,9 +90,24 @@ interface SessionDao {
 }
 
 /**
- * Time-based statistics result.
+ * Time-based statistics result. [totalMantras] is exact (BigInteger).
  */
 data class TimeStats(
     val sessionCount: Long,
-    val totalMantras: Long
+    val totalMantras: BigInteger
 )
+
+// Stats aggregates, computed in Kotlin with BigInteger (see observeAggregateRowsSince).
+
+fun SessionDao.getMantraStats(): Flow<List<MantraStats>> = getMantraStatsSince(0L)
+
+fun SessionDao.getMantraStatsSince(sinceTimestamp: Long): Flow<List<MantraStats>> =
+    observeAggregateRowsSince(sinceTimestamp).map(SessionAggregates::byMantra)
+
+fun SessionDao.getWheelStats(): Flow<List<WheelStats>> = getWheelStatsSince(0L)
+
+fun SessionDao.getWheelStatsSince(sinceTimestamp: Long): Flow<List<WheelStats>> =
+    observeAggregateRowsSince(sinceTimestamp).map(SessionAggregates::byWheel)
+
+fun SessionDao.getStatsSince(sinceTimestamp: Long): Flow<TimeStats?> =
+    observeAggregateRowsSince(sinceTimestamp).map(SessionAggregates::totals)
