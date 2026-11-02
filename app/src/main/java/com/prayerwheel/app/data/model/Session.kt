@@ -39,5 +39,12 @@ data class Session(
      * ViewModel save, SessionSaveWorker and checkpoint recovery so the same
      * session is never recorded twice. Null for manual logs and pre-v5 rows.
      */
-    @ColumnInfo(name = "session_key") val sessionKey: String? = null
+    @ColumnInfo(name = "session_key") val sessionKey: String? = null,
+    /**
+     * When this row was credited to lifetime_stats (set by the ledger on
+     * insert). Compared with [LifetimeStats.resetAt]: rows credited before a
+     * lifetime reset are not debited on delete. Null for pre-v5 rows, which
+     * necessarily predate any reset recorded by v5+.
+     */
+    @ColumnInfo(name = "recorded_at") val recordedAt: Long? = null
 )

@@ -60,8 +60,8 @@ class SessionLedgerCheckpointTest {
 
     @Test
     fun sameKeyRecordedTwice_countsOnce() = runBlocking {
-        SessionLedger.recordSession(store, live(), 30)
-        val second = SessionLedger.recordSession(store, live(), 30)
+        SessionLedger.recordSession(store, live(), 30, TEST_NOW)
+        val second = SessionLedger.recordSession(store, live(), 30, TEST_NOW)
         assertFalse(second.changed)
         assertEquals(1, store.sessions.size)
         assertEquals(BigInteger.valueOf(1_000), lifetimeMantras())
@@ -70,14 +70,14 @@ class SessionLedgerCheckpointTest {
 
     @Test
     fun newerSnapshot_replacesInPlace_olderSnapshot_isIgnored() = runBlocking {
-        val first = SessionLedger.recordSession(store, live(rotations = 10), 30).session
-        SessionLedger.recordSession(store, live(rotations = 15, endedAt = t0 + 60_000), 60)
+        val first = SessionLedger.recordSession(store, live(rotations = 10), 30, TEST_NOW).session
+        SessionLedger.recordSession(store, live(rotations = 15, endedAt = t0 + 60_000), 60, TEST_NOW)
         assertEquals(1, store.sessions.size)
         assertEquals(first.id, store.sessions.values.single().id)
         assertEquals(BigInteger.valueOf(1_500), lifetimeMantras())
         assertEquals(1L, store.stats!!.sessionsCompleted)
         // A stale snapshot arriving late (e.g. an old checkpoint) must not roll back.
-        val stale = SessionLedger.recordSession(store, live(rotations = 12, endedAt = t0 + 45_000), 45)
+        val stale = SessionLedger.recordSession(store, live(rotations = 12, endedAt = t0 + 45_000), 45, TEST_NOW)
         assertFalse(stale.changed)
         assertEquals(BigInteger.valueOf(1_500), lifetimeMantras())
         assertEquals(15L, store.sessions.values.single().rotationCount)
@@ -87,14 +87,14 @@ class SessionLedgerCheckpointTest {
     fun record_clearsOnlyItsOwnCheckpoint() = runBlocking {
         store.upsertCheckpoint(checkpoint(key = "k1"))
         store.upsertCheckpoint(checkpoint(key = "k2"))
-        SessionLedger.recordSession(store, live(key = "k1"), 30)
+        SessionLedger.recordSession(store, live(key = "k1"), 30, TEST_NOW)
         assertEquals(setOf("k2"), store.checkpoints.keys)
     }
 
     @Test
     fun recovery_recordsCheckpointAsCompletedSession_once() = runBlocking {
         store.upsertCheckpoint(checkpoint(rotations = 7, updatedAt = t0 + 99_000, durationSeconds = 99))
-        val recovered = SessionLedger.recoverCheckpoints(store)
+        val recovered = SessionLedger.recoverCheckpoints(store, TEST_NOW)
         assertEquals(1, recovered.size)
         val row = store.sessions.values.single()
         assertEquals("k1", row.sessionKey)
@@ -105,7 +105,7 @@ class SessionLedgerCheckpointTest {
         assertEquals(99L, store.stats!!.totalSpinningTimeSeconds)
         assertTrue(store.checkpoints.isEmpty())
         // Second launch: nothing left to recover, nothing double-counted.
-        assertTrue(SessionLedger.recoverCheckpoints(store).isEmpty())
+        assertTrue(SessionLedger.recoverCheckpoints(store, TEST_NOW).isEmpty())
         assertEquals(BigInteger.valueOf(700), lifetimeMantras())
     }
 
@@ -114,8 +114,8 @@ class SessionLedgerCheckpointTest {
         // onCleared enqueued the worker with the newest snapshot; the checkpoint
         // (15 s older) survived because the process died before recovery ran.
         store.upsertCheckpoint(checkpoint(rotations = 10, updatedAt = t0 + 30_000))
-        SessionLedger.recordSession(store, live(rotations = 12, endedAt = t0 + 40_000), 40) // worker
-        SessionLedger.recoverCheckpoints(store)
+        SessionLedger.recordSession(store, live(rotations = 12, endedAt = t0 + 40_000), 40, TEST_NOW) // worker
+        SessionLedger.recoverCheckpoints(store, TEST_NOW)
         assertEquals(1, store.sessions.size)
         assertEquals(BigInteger.valueOf(1_200), lifetimeMantras())
     }
@@ -123,8 +123,8 @@ class SessionLedgerCheckpointTest {
     @Test
     fun recoveryThenWorker_sameSession_countedOnceWithNewestCounts() = runBlocking {
         store.upsertCheckpoint(checkpoint(rotations = 10, updatedAt = t0 + 30_000))
-        SessionLedger.recoverCheckpoints(store)
-        SessionLedger.recordSession(store, live(rotations = 12, endedAt = t0 + 40_000), 40) // worker
+        SessionLedger.recoverCheckpoints(store, TEST_NOW)
+        SessionLedger.recordSession(store, live(rotations = 12, endedAt = t0 + 40_000), 40, TEST_NOW) // worker
         assertEquals(1, store.sessions.size)
         assertEquals(BigInteger.valueOf(1_200), lifetimeMantras())
         assertEquals(1L, store.stats!!.sessionsCompleted)
@@ -134,7 +134,7 @@ class SessionLedgerCheckpointTest {
     @Test
     fun zeroRotationCheckpoint_isDiscarded() = runBlocking {
         store.upsertCheckpoint(checkpoint(rotations = 0))
-        assertTrue(SessionLedger.recoverCheckpoints(store).isEmpty())
+        assertTrue(SessionLedger.recoverCheckpoints(store, TEST_NOW).isEmpty())
         assertTrue(store.sessions.isEmpty())
         assertTrue(store.checkpoints.isEmpty())
     }
@@ -142,7 +142,7 @@ class SessionLedgerCheckpointTest {
     @Test
     fun resume_keepsRow_andNextSaveReplacesInPlace() = runBlocking {
         // A legacy (pre-v5, keyless) interrupted session.
-        val original = SessionLedger.recordSession(store, live(key = null, rotations = 10), 30).session
+        val original = SessionLedger.recordSession(store, live(key = null, rotations = 10), 30, TEST_NOW).session
         val before = lifetimeMantras()
 
         val key = SessionLedger.ensureSessionKey(store, original.id, "resume-key")!!
@@ -155,7 +155,7 @@ class SessionLedgerCheckpointTest {
 
         // The process dies mid-resume; the checkpoint carries 14 rotations.
         store.upsertCheckpoint(checkpoint(key = key, rotations = 14, updatedAt = t0 + 120_000, durationSeconds = 120))
-        SessionLedger.recoverCheckpoints(store)
+        SessionLedger.recoverCheckpoints(store, TEST_NOW)
         assertEquals(1, store.sessions.size)
         assertEquals(original.id, store.sessions.values.single().id)
         assertEquals(BigInteger.valueOf(1_400), lifetimeMantras())
@@ -169,8 +169,8 @@ class SessionLedgerCheckpointTest {
 
     @Test
     fun dedicationAndLabel_onStoredRow_surviveNewerSnapshotWithoutThem() = runBlocking {
-        SessionLedger.recordSession(store, live(rotations = 10, dedication = "all beings").copy(label = "evening"), 30)
-        SessionLedger.recordSession(store, live(rotations = 11, endedAt = t0 + 50_000), 50)
+        SessionLedger.recordSession(store, live(rotations = 10, dedication = "all beings").copy(label = "evening"), 30, TEST_NOW)
+        SessionLedger.recordSession(store, live(rotations = 11, endedAt = t0 + 50_000), 50, TEST_NOW)
         val row = store.sessions.values.single()
         assertEquals("all beings", row.dedication)
         assertEquals("evening", row.label)
@@ -179,10 +179,10 @@ class SessionLedgerCheckpointTest {
 
     @Test
     fun deletingSession_dropsItsCheckpoint_soRecoveryCannotResurrectIt() = runBlocking {
-        val row = SessionLedger.recordSession(store, live(), 30).session
+        val row = SessionLedger.recordSession(store, live(), 30, TEST_NOW).session
         store.upsertCheckpoint(checkpoint()) // a late/stale checkpoint write
         SessionLedger.deleteSessionAndDebit(store, row.id)
-        assertTrue(SessionLedger.recoverCheckpoints(store).isEmpty())
+        assertTrue(SessionLedger.recoverCheckpoints(store, TEST_NOW).isEmpty())
         assertTrue(store.sessions.isEmpty())
         assertEquals(BigInteger.ZERO, lifetimeMantras())
     }
@@ -192,6 +192,6 @@ class SessionLedgerCheckpointTest {
         store.upsertCheckpoint(checkpoint())
         SessionLedger.resetAll(store)
         assertTrue(store.checkpoints.isEmpty())
-        assertTrue(SessionLedger.recoverCheckpoints(store).isEmpty())
+        assertTrue(SessionLedger.recoverCheckpoints(store, TEST_NOW).isEmpty())
     }
 }

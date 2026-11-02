@@ -3,7 +3,6 @@ package com.prayerwheel.app.data.stats
 import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.data.model.Session
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 import java.math.BigInteger
 
@@ -75,15 +74,21 @@ class LifetimeStatsMathTest {
     }
 
     @Test
-    fun currentBehavior_plusSession_doesNotBackfillNullFirstSessionAt() {
-        // After resetLifetimeStats() the row has firstSessionAt = null; it is never filled again.
+    fun plusSession_backfillsNullFirstSessionAt() {
+        // After resetLifetimeStats() the row has firstSessionAt = null; the next session refills it.
         val r = LifetimeStatsMath.plusSession(stats(first = null), session(startedAt = 9_999L), 10)
-        assertNull(r.firstSessionAt)
+        assertEquals(9_999L, r.firstSessionAt)
     }
 
     @Test
-    fun currentBehavior_plusSession_doesNotLowerFirstSessionAtForBackdatedSession() {
+    fun plusSession_lowersFirstSessionAtForBackdatedSession() {
         val r = LifetimeStatsMath.plusSession(stats(first = 500L), session(startedAt = 1L), 10)
+        assertEquals(1L, r.firstSessionAt)
+    }
+
+    @Test
+    fun plusSession_keepsEarlierFirstSessionAt() {
+        val r = LifetimeStatsMath.plusSession(stats(first = 500L), session(startedAt = 9_999L), 10)
         assertEquals(500L, r.firstSessionAt)
     }
 

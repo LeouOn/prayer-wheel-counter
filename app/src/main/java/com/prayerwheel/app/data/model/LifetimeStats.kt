@@ -21,5 +21,11 @@ data class LifetimeStats(
     val sessionsCompleted: Long,
     val firstSessionAt: Long?,
     @ColumnInfo(name = "total_spinning_time_seconds") val totalSpinningTimeSeconds: Long = 0L,
-    @ColumnInfo(name = "average_session_duration_seconds") val averageSessionDurationSeconds: Long = 0L
+    @ColumnInfo(name = "average_session_duration_seconds") val averageSessionDurationSeconds: Long = 0L,
+    /**
+     * Time of the last "Reset lifetime stats" (sessions kept), or null if never
+     * reset since v5. Sessions credited before it no longer count toward these
+     * totals, so deleting/restoring them must not debit/credit.
+     */
+    @ColumnInfo(name = "reset_at") val resetAt: Long? = null
 )

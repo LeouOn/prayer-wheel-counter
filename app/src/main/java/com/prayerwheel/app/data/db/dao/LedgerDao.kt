@@ -74,7 +74,7 @@ abstract class LedgerDao : SessionLedgerStore {
 
     @Transaction
     open suspend fun recordSession(session: Session, durationSeconds: Long): SessionLedger.Recorded =
-        SessionLedger.recordSession(this, session, durationSeconds)
+        SessionLedger.recordSession(this, session, durationSeconds, System.currentTimeMillis())
 
     @Transaction
     open suspend fun deleteSessionAndDebit(id: Long): Session? =
@@ -86,7 +86,7 @@ abstract class LedgerDao : SessionLedgerStore {
 
     @Transaction
     open suspend fun replaceSession(oldId: Long, replacement: Session, durationSeconds: Long): SessionLedger.Recorded =
-        SessionLedger.replaceSession(this, oldId, replacement, durationSeconds)
+        SessionLedger.replaceSession(this, oldId, replacement, durationSeconds, System.currentTimeMillis())
 
     @Transaction
     open suspend fun ensureSessionKey(id: Long, newKey: String): String? =
@@ -94,14 +94,14 @@ abstract class LedgerDao : SessionLedgerStore {
 
     @Transaction
     open suspend fun recoverCheckpoints(): List<SessionLedger.Recorded> =
-        SessionLedger.recoverCheckpoints(this)
+        SessionLedger.recoverCheckpoints(this, System.currentTimeMillis())
 
     /** Single-statement upsert of the live-session checkpoint (atomic on its own). */
     suspend fun saveCheckpoint(checkpoint: ActiveSessionCheckpoint) = upsertCheckpoint(checkpoint)
 
     @Transaction
     open suspend fun resetLifetime(): LifetimeStats =
-        SessionLedger.resetLifetime(this)
+        SessionLedger.resetLifetime(this, System.currentTimeMillis())
 
     @Transaction
     open suspend fun resetAll() =

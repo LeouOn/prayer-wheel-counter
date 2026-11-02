@@ -31,7 +31,7 @@ class SessionLedgerTest {
 
     @Test
     fun record_insertsRowAndCreditsLifetime() = runBlocking {
-        val r = SessionLedger.recordSession(store, session(), 60)
+        val r = SessionLedger.recordSession(store, session(), 60, TEST_NOW)
         assertEquals(1, store.sessions.size)
         assertEquals(r.session, store.sessions[r.session.id])
         assertEquals(BigInteger.valueOf(1_000), store.stats!!.totalMantras)
@@ -41,8 +41,8 @@ class SessionLedgerTest {
 
     @Test
     fun deleteAndDebit_removesRowAndDebits_onlyOnce() = runBlocking {
-        val a = SessionLedger.recordSession(store, session(rotations = 10), 60).session
-        SessionLedger.recordSession(store, session(rotations = 5), 60)
+        val a = SessionLedger.recordSession(store, session(rotations = 10), 60, TEST_NOW).session
+        SessionLedger.recordSession(store, session(rotations = 5), 60, TEST_NOW)
         val deleted = SessionLedger.deleteSessionAndDebit(store, a.id)
         assertEquals(a, deleted)
         assertEquals(BigInteger.valueOf(500), store.stats!!.totalMantras)
@@ -54,7 +54,7 @@ class SessionLedgerTest {
 
     @Test
     fun restore_isInverseOfDelete_andIdempotent() = runBlocking {
-        val a = SessionLedger.recordSession(store, session(), 60).session
+        val a = SessionLedger.recordSession(store, session(), 60, TEST_NOW).session
         val before = store.stats
         val deleted = SessionLedger.deleteSessionAndDebit(store, a.id)!!
         assertNotNull(SessionLedger.restoreSession(store, deleted))
@@ -67,10 +67,10 @@ class SessionLedgerTest {
 
     @Test
     fun replace_updatesInPlace_andCreditsOnlyTheDelta() = runBlocking {
-        SessionLedger.recordSession(store, session(rotations = 1), 60)
-        val old = SessionLedger.recordSession(store, session(rotations = 10), 60).session
+        SessionLedger.recordSession(store, session(rotations = 1), 60, TEST_NOW)
+        val old = SessionLedger.recordSession(store, session(rotations = 10), 60, TEST_NOW).session
         val replacement = session(rotations = 25, endedAt = old.startedAt + 120_000L)
-        val r = SessionLedger.replaceSession(store, old.id, replacement, 120)
+        val r = SessionLedger.replaceSession(store, old.id, replacement, 120, TEST_NOW)
         assertEquals(old.id, r.session.id)
         assertEquals(2, store.sessions.size)
         assertEquals(25L, store.sessions[old.id]!!.rotationCount)
@@ -82,7 +82,7 @@ class SessionLedgerTest {
 
     @Test
     fun replace_missingOldRow_recordsAsNew() = runBlocking {
-        val r = SessionLedger.replaceSession(store, 99L, session(rotations = 3), 10)
+        val r = SessionLedger.replaceSession(store, 99L, session(rotations = 3), 10, TEST_NOW)
         assertEquals(1, store.sessions.size)
         assertEquals(BigInteger.valueOf(300), store.stats!!.totalMantras)
         assertEquals(store.sessions.values.single(), r.session)
@@ -90,8 +90,8 @@ class SessionLedgerTest {
 
     @Test
     fun resetLifetime_keepsSessions_resetAll_wipesEverything() = runBlocking {
-        SessionLedger.recordSession(store, session(), 60)
-        SessionLedger.resetLifetime(store)
+        SessionLedger.recordSession(store, session(), 60, TEST_NOW)
+        SessionLedger.resetLifetime(store, TEST_NOW)
         assertEquals(1, store.sessions.size)
         assertEquals(BigInteger.ZERO, store.stats!!.totalMantras)
         assertEquals(0L, store.stats!!.sessionsCompleted)

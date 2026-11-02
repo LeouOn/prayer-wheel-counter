@@ -17,9 +17,8 @@ object LifetimeStatsMath {
      * Adds one session to [existing]. When there is no row yet, creates the
      * singleton row (id = 1) seeded from the session.
      *
-     * Current behavior (pinned by tests): when a row already exists,
-     * `firstSessionAt` is carried over unchanged — even if it is null (e.g.
-     * after a lifetime reset) or later than the session's start.
+     * `firstSessionAt` is the earliest start among credited sessions: it is
+     * refilled after a lifetime reset (null) and lowered for backdated logs.
      */
     fun plusSession(existing: LifetimeStats?, session: Session, durationSeconds: Long): LifetimeStats =
         existing?.copy(
@@ -28,6 +27,7 @@ object LifetimeStatsMath {
             totalRotations = saturatingAdd(existing.totalRotations, session.rotationCount),
             totalMantras = existing.totalMantras + session.totalMantras,
             sessionsCompleted = existing.sessionsCompleted + 1,
+            firstSessionAt = minOf(existing.firstSessionAt ?: session.startedAt, session.startedAt),
             totalSpinningTimeSeconds = saturatingAdd(existing.totalSpinningTimeSeconds, durationSeconds),
             averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
                 saturatingAdd(existing.totalSpinningTimeSeconds, durationSeconds) / (existing.sessionsCompleted + 1)

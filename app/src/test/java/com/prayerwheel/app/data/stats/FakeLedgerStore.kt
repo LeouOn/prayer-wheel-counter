@@ -4,6 +4,9 @@ import com.prayerwheel.app.data.model.ActiveSessionCheckpoint
 import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.data.model.Session
 
+/** Fixed "now" for ledger tests (after every session/start time used in them). */
+const val TEST_NOW = 1_800_000_000_000L
+
 /**
  * In-memory [SessionLedgerStore] mirroring the Room DAO semantics used by
  * [com.prayerwheel.app.data.db.dao.LedgerDao] (autoincrement ids, ABORT on a

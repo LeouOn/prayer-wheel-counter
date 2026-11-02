@@ -24,12 +24,18 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
  *    indexes allow many NULLs).
  *  - `active_session`: durable checkpoint of the in-progress session, keyed
  *    by session key (normally zero or one row).
+ *  - `sessions.recorded_at` / `lifetime_stats.reset_at`: when a row was
+ *    credited vs. when lifetime totals were last reset, so deleting a session
+ *    recorded before a reset doesn't debit the new totals. NULL for existing
+ *    rows (pre-v5 rows predate any reset recorded from v5 on).
  * Statements must match app/schemas/.../5.json exactly (checked by
  * MigrationsSchemaTest).
  */
 internal val MIGRATION_4_5_SQL = listOf(
     "ALTER TABLE `sessions` ADD COLUMN `session_key` TEXT",
     "CREATE UNIQUE INDEX IF NOT EXISTS `index_sessions_session_key` ON `sessions` (`session_key`)",
+    "ALTER TABLE `sessions` ADD COLUMN `recorded_at` INTEGER",
+    "ALTER TABLE `lifetime_stats` ADD COLUMN `reset_at` INTEGER",
     "CREATE TABLE IF NOT EXISTS `active_session` (`sessionKey` TEXT NOT NULL, " +
         "`startedAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `rotationCount` INTEGER NOT NULL, " +
         "`mantrasPerRotation` INTEGER NOT NULL, `totalMantras` TEXT NOT NULL, `mantraId` TEXT NOT NULL, " +
