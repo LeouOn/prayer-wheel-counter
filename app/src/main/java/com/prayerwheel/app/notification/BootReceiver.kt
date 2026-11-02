@@ -1,61 +1,56 @@
 package com.prayerwheel.app.notification
 
+import android.app.AlarmManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
 
 /**
- * [BroadcastReceiver] that listens for [Intent.ACTION_BOOT_COMPLETED] so the app
- * can re-arm its scheduled reminders after a device restart.
+ * Single rescheduling receiver: re-arms every app alarm (morning and evening
+ * practice reminders plus the end-of-day summary) from persisted preferences
+ * whenever existing alarms are lost or have gone stale.
  *
- * Alarms set via [android.app.AlarmManager] do not survive a reboot, so any
- * practice-reminder the user had scheduled must be rescheduled from persisted
- * preferences once the device finishes booting.
+ * Handled actions:
+ *  - [Intent.ACTION_BOOT_COMPLETED]: alarms do not survive a reboot.
+ *  - [Intent.ACTION_TIMEZONE_CHANGED] / [Intent.ACTION_TIME_CHANGED]: alarms
+ *    are stored as absolute instants computed from a local clock time, so after
+ *    travel or a manual clock change they would fire at the wrong local time.
+ *  - [Intent.ACTION_MY_PACKAGE_REPLACED]: an app update clears pending alarms
+ *    on some devices, and re-arming picks up any scheduling changes.
+ *  - [AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED]
+ *    (API 31+): sent when the user grants exact alarms, so the inexact
+ *    fallbacks are upgraded to exact ones.
  *
- * The rescheduling itself is delegated to [ReminderScheduler.rescheduleAllFromPreferences].
+ * The work runs via [runAsync] (goAsync plus a short, time-bounded coroutine)
+ * so the DataStore reads never block the main thread.
  */
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context?, intent: Intent?) {
         if (context == null || intent == null) return
+        if (intent.action !in RESCHEDULE_ACTIONS) return
 
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-
-        // ReminderScheduler.rescheduleAllFromPreferences reads from DataStore
-        // via runBlocking. On first boot after install there is no in-memory
-        // cache, so the synchronous file read on the main thread could ANR.
-        // Move the work off the main thread via goAsync(); the system keeps
-        // the broadcast alive (~10s budget) until finish() is called.
-        val pendingResult = goAsync()
-        Thread {
-            try {
-                runCatching { rescheduleReminders(context) }
-                    .onFailure { e ->
-                        Log.e(TAG, "Failed to reschedule reminders on boot", e)
-                    }
-            } finally {
-                pendingResult.finish()
-            }
-        }.start()
-    }
-
-    /**
-     * Re-arm all practice reminders from persisted preferences.
-     *
-     * Delegates to [ReminderScheduler.rescheduleAllFromPreferences], which
-     * reads the reminder toggles and times from DataStore and reschedules the
-     * morning/evening alarms via [android.app.AlarmManager.setAlarmClock].
-     *
-     * The call site wraps this in `runCatching` so that even if the scheduler
-     * throws (e.g. AlarmManager in an unexpected state on some OEM ROMs), the
-     * device's boot sequence cannot be disrupted.
-     */
-    private fun rescheduleReminders(context: Context) {
-        ReminderScheduler.rescheduleAllFromPreferences(context)
+        val appContext = context.applicationContext
+        runAsync(TAG) {
+            // Each re-arm is isolated so one failure (e.g. an OEM AlarmManager
+            // quirk) cannot prevent the other alarms from being restored.
+            runCatching { ReminderScheduler.rescheduleAllFromPreferences(appContext) }
+                .onFailure { e -> Log.e(TAG, "Failed to reschedule reminders (${intent.action})", e) }
+            runCatching { EndOfDayScheduler.rescheduleFromPreferences(appContext) }
+                .onFailure { e -> Log.e(TAG, "Failed to reschedule end-of-day alarm (${intent.action})", e) }
+        }
     }
 
     private companion object {
         private const val TAG = "BootReceiver"
+
+        private val RESCHEDULE_ACTIONS = setOf(
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_TIMEZONE_CHANGED,
+            Intent.ACTION_TIME_CHANGED,
+            Intent.ACTION_MY_PACKAGE_REPLACED,
+            AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED
+        )
     }
 }

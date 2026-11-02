@@ -55,20 +55,27 @@ class SessionNotificationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        if (intent == null) {
+            // Restarted by the system after process death. The live session
+            // state belongs to the ViewModel, which no longer exists, so
+            // posting would show a ghost "00:00:00 • 0 mantras" notification
+            // with a timer nobody owns. Stop quietly instead.
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+
+        when (intent.action) {
             ACTION_PAUSE_SESSION -> handlePause()
             ACTION_RESUME_SESSION -> handleResume()
             ACTION_CLOSE_SESSION -> handleClose()
             else -> {
-                // Extract initial extras if present
-                if (intent != null) {
-                    sessionDurationSeconds = intent.getLongExtra(EXTRA_SESSION_DURATION_SECONDS, 0L)
-                    val rawStr = intent.getStringExtra(EXTRA_MANTRA_COUNT_RAW)
-                    if (rawStr != null) {
-                        mantraCountRaw = BigInteger(rawStr)
-                    }
-                    isPaused = intent.getBooleanExtra(EXTRA_IS_PAUSED, false)
+                // Extract initial extras
+                sessionDurationSeconds = intent.getLongExtra(EXTRA_SESSION_DURATION_SECONDS, 0L)
+                val rawStr = intent.getStringExtra(EXTRA_MANTRA_COUNT_RAW)
+                if (rawStr != null) {
+                    mantraCountRaw = BigInteger(rawStr)
                 }
+                isPaused = intent.getBooleanExtra(EXTRA_IS_PAUSED, false)
                 // Write initial state to companion so update() sees it
                 companionDurationSeconds = sessionDurationSeconds
                 companionMantraCount = mantraCountRaw
@@ -81,7 +88,9 @@ class SessionNotificationService : Service() {
                 )
             }
         }
-        return START_STICKY
+        // Not sticky: a session cannot outlive the process that owns its
+        // state, so there is nothing meaningful to restart into.
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

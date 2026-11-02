@@ -13,7 +13,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.prayerwheel.app.PrayerWheelApp
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 
 /**
  * [BroadcastReceiver] fired by [android.app.AlarmManager] when a scheduled
@@ -39,35 +38,38 @@ class ReminderReceiver : BroadcastReceiver() {
         if (context == null || intent == null) return
         val appContext = context.applicationContext
 
-        when (intent.action) {
-            ReminderScheduler.ACTION_MORNING_REMINDER -> handleReminder(appContext, isMorning = true)
-            ReminderScheduler.ACTION_EVENING_REMINDER -> handleReminder(appContext, isMorning = false)
+        val isMorning = when (intent.action) {
+            ReminderScheduler.ACTION_MORNING_REMINDER -> true
+            ReminderScheduler.ACTION_EVENING_REMINDER -> false
             else -> return
         }
+
+        // DataStore reads must not block the main thread (a cold read could
+        // ANR). goAsync plus a short, time-bounded coroutine; the pending
+        // result is always finished.
+        runAsync(TAG) { handleReminder(appContext, isMorning) }
     }
 
-    private fun handleReminder(context: Context, isMorning: Boolean) {
+    private suspend fun handleReminder(context: Context, isMorning: Boolean) {
         val userPreferences = (context as PrayerWheelApp).userPreferences
-        val snapshot = runBlocking {
-            ReminderSnapshot(
-                enabled = if (isMorning) {
-                    userPreferences.reminderMorningEnabled.first()
-                } else {
-                    userPreferences.reminderEveningEnabled.first()
-                },
-                hour = if (isMorning) {
-                    userPreferences.reminderMorningHour.first()
-                } else {
-                    userPreferences.reminderEveningHour.first()
-                },
-                minute = if (isMorning) {
-                    userPreferences.reminderMorningMinute.first()
-                } else {
-                    userPreferences.reminderEveningMinute.first()
-                },
-                intention = userPreferences.currentIntention.first()
-            )
-        }
+        val snapshot = ReminderSnapshot(
+            enabled = if (isMorning) {
+                userPreferences.reminderMorningEnabled.first()
+            } else {
+                userPreferences.reminderEveningEnabled.first()
+            },
+            hour = if (isMorning) {
+                userPreferences.reminderMorningHour.first()
+            } else {
+                userPreferences.reminderEveningHour.first()
+            },
+            minute = if (isMorning) {
+                userPreferences.reminderMorningMinute.first()
+            } else {
+                userPreferences.reminderEveningMinute.first()
+            },
+            intention = userPreferences.currentIntention.first()
+        )
 
         // If the user disabled this reminder between scheduling and firing,
         // stop the cycle cleanly: do not notify, do not reschedule.

@@ -8,7 +8,6 @@ import android.os.Build
 import android.util.Log
 import com.prayerwheel.app.PrayerWheelApp
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import java.util.Calendar
 
 /**
@@ -27,9 +26,11 @@ import java.util.Calendar
  * also makes the daily cadence resilient to the user changing their reminder
  * time — only the most recently scheduled alarm survives.
  *
- * Alarms do NOT survive a device reboot; [rescheduleAllFromPreferences] is
- * invoked by [BootReceiver] after `BOOT_COMPLETED` to re-arm them from the
- * persisted DataStore preferences.
+ * Alarms do NOT survive a device reboot, and their trigger instants go stale
+ * when the wall clock or time zone changes; [rescheduleAllFromPreferences] is
+ * invoked by [BootReceiver] on boot, time/zone changes, app updates and
+ * exact-alarm permission changes to re-arm them from the persisted DataStore
+ * preferences.
  *
  * On API 31+ (S) the app must hold the `SCHEDULE_EXACT_ALARM` (or
  * `USE_EXACT_ALARM`) permission to call `setAlarmClock`. If the user has
@@ -108,13 +109,11 @@ object ReminderScheduler {
     /**
      * Re-arms all practice reminders from the persisted DataStore preferences.
      *
-     * This is called synchronously from [BootReceiver.onReceive] after a device
-     * reboot, so it reads the relevant preference flows via [runBlocking].
-     * DataStore caches its latest snapshot in memory after first access, so the
-     * blocking read is brief. Reminders that the user has disabled are
-     * explicitly cancelled to avoid orphan alarms.
+     * Called from [BootReceiver] inside a goAsync coroutine, so the DataStore
+     * reads suspend off the main thread. Reminders that the user has disabled
+     * are explicitly cancelled to avoid orphan alarms.
      */
-    fun rescheduleAllFromPreferences(context: Context) {
+    suspend fun rescheduleAllFromPreferences(context: Context) {
         val appContext = context.applicationContext
         val config = readConfig(appContext)
 
@@ -261,22 +260,17 @@ object ReminderScheduler {
         return calendar.timeInMillis
     }
 
-    /**
-     * Reads the reminder configuration synchronously. Intended for use from
-     * contexts without a coroutine scope (e.g. [BootReceiver.onReceive]).
-     */
-    private fun readConfig(context: Context): ReminderConfig {
+    /** Reads the reminder configuration from DataStore. */
+    private suspend fun readConfig(context: Context): ReminderConfig {
         val userPreferences = (context.applicationContext as PrayerWheelApp).userPreferences
-        return runBlocking {
-            ReminderConfig(
-                morningEnabled = userPreferences.reminderMorningEnabled.first(),
-                morningHour = userPreferences.reminderMorningHour.first(),
-                morningMinute = userPreferences.reminderMorningMinute.first(),
-                eveningEnabled = userPreferences.reminderEveningEnabled.first(),
-                eveningHour = userPreferences.reminderEveningHour.first(),
-                eveningMinute = userPreferences.reminderEveningMinute.first()
-            )
-        }
+        return ReminderConfig(
+            morningEnabled = userPreferences.reminderMorningEnabled.first(),
+            morningHour = userPreferences.reminderMorningHour.first(),
+            morningMinute = userPreferences.reminderMorningMinute.first(),
+            eveningEnabled = userPreferences.reminderEveningEnabled.first(),
+            eveningHour = userPreferences.reminderEveningHour.first(),
+            eveningMinute = userPreferences.reminderEveningMinute.first()
+        )
     }
 
     private fun formatForLog(hour: Int, minute: Int): String {
