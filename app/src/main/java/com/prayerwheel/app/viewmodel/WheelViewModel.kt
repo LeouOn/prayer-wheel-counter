@@ -27,14 +27,18 @@ import com.prayerwheel.app.data.model.SavedWheel
 import com.prayerwheel.app.data.model.WheelSkin
 import com.prayerwheel.app.data.model.WheelSkins
 import com.prayerwheel.app.data.model.Session
+import com.prayerwheel.app.data.stats.LifetimeStatsMath
 import com.prayerwheel.app.data.model.Achievement
-import com.prayerwheel.app.data.model.Achievements
 import com.prayerwheel.app.audio.AudioEngine
 import com.prayerwheel.app.audio.BreathModeController
 import com.prayerwheel.app.notification.SessionNotificationService
 import com.prayerwheel.app.notification.SessionNotificationReceiver
 import com.prayerwheel.app.widget.PrayerWheelWidget
 import com.prayerwheel.app.work.SessionSaveWorker
+import com.prayerwheel.app.viewmodel.haptics.HapticPatterns
+import com.prayerwheel.app.viewmodel.milestones.Milestones
+import com.prayerwheel.app.viewmodel.physics.SpinPhysics
+import com.prayerwheel.app.viewmodel.session.SessionRules
 import androidx.glance.appwidget.updateAll
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -55,12 +59,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.math.BigInteger
+import java.time.ZoneId
 import java.util.Calendar
 import java.util.TimeZone
-import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
-import kotlin.math.sin
 
 /**
  * ViewModel for the prayer wheel screen.
@@ -78,49 +81,23 @@ class WheelViewModel(
 ) : ViewModel() {
 
     companion object {
-        private const val FRICTION_COEFFICIENT = 0.008f
-        private const val TWO_HANDED_FRICTION = 0.0001f
-        private const val STOP_THRESHOLD = 0.001f
-        private const val TWO_PI = 2f * PI.toFloat()
+        private const val FRICTION_COEFFICIENT = SpinPhysics.FRICTION_COEFFICIENT
+        private const val STOP_THRESHOLD = SpinPhysics.STOP_THRESHOLD
         private const val SESSION_STOP_DELAY_MS = 30000L
         private const val SESSION_NEW_THRESHOLD_MS = 300000L // 5 minutes
         private const val ANIMATION_FRAME_TIME_MS = 16L
         private const val WIDGET_UPDATE_THROTTLE_MS = 1000L
-        // Reduced from 1.5f so flicks don't slam into the lowered velocity cap (12.566 rad/s).
-        // At 1.0f, a typical drag of ~8 rad/s reaches the cap cleanly without an invisible wall.
-        private const val FLICK_VELOCITY_MULTIPLIER = 1.0f
-        // 120 RPM × 2π/60 ≈ 12.566 rad/s — vigorous but meditative devotional cap.
-        // Real prayer wheels spin at 30-100 RPM; the previous 75f (~716 RPM) was frantic.
-        private const val MAX_ANGULAR_VELOCITY = 12.566f
         private const val COUNTER_CLOCKWISE_REMINDER_DELAY_MS = 3000L
-        private const val MIN_COUNTER_CLOCKWISE_VELOCITY = 3.0f // rad/s — below this, accidental flicks are ignored
         private const val COUNTER_CLOCKWISE_COOLDOWN_MS = 300_000L // 5 min between reminders
-
-        // Static friction: wheel halts cleanly below this angular velocity (rad/s) when no torque is applied.
-        private const val STATIC_FRICTION_THRESHOLD = 0.05f
-        // Weight→wheel coupling: restoring torque coefficient from sin(weightAngle); acts as extra friction at low speed.
-        private const val WEIGHT_COUPLING_COEFFICIENT = 0.03f
-        // Auto-spin ramp: max rad/s change per frame at the 60fps baseline (~0.5-1.5s ramp to a typical target RPM).
-        private const val AUTO_SPIN_MAX_ACCEL_PER_FRAME = 0.1f
-        // Wheel-mass scaling default. Drag angular change is divided by wheelMass so heavier wheels resist acceleration.
-        private const val WHEEL_MASS_DEFAULT = 1.0f
 
         // Haptic feedback durations in milliseconds
         private const val HAPTIC_PAUSE_DURATION = 50L
         private const val HAPTIC_SLIDER_DURATION = 3L
-        private const val HAPTIC_MILESTONE_DURATION = 20L
         private const val SESSION_TIMER_INTERVAL_MS = 1000L
 
-        // Breath mode: angular acceleration (rad/s²) per unit of normalized mic
-        // amplitude. At steady breath (amp ≈ 0.3–0.5) the wheel settles around
-        // 30–60 RPM; a strong blow (amp ≈ 1.0) approaches the 120 RPM devotional
-        // cap. Tuned against FRICTION_COEFFICIENT so the steady-state velocity
-        // (BREATH_TORQUE × amp / μ) lands in that band.
-        private const val BREATH_TORQUE = 0.1f
-        // Below this normalized amplitude the breath input is treated as zero
-        // for the purposes of (a) keeping the physics loop alive and
-        // (b) bypassing static-friction snap-to-zero.
-        private const val BREATH_ACTIVE_THRESHOLD = 0.01f
+        // Breath-mode physics constants live in [SpinPhysics]; this alias keeps the
+        // physics-loop keep-alive condition readable.
+        private const val BREATH_ACTIVE_THRESHOLD = SpinPhysics.BREATH_ACTIVE_THRESHOLD
     }
 
     /**
@@ -144,22 +121,6 @@ class WheelViewModel(
      * Tied to [viewModelScope] so its IO coroutine is cancelled with the ViewModel.
      */
     private var breathModeController: BreathModeController? = null
-
-    /**
-     * Lifetime-mantra thresholds (1K → 1T) that trigger singing bowl tones.
-     * Index in this list = bowl tier (0 = deepest, 7 = brightest). Each entry
-     * mirrors the `mantrasRequired` of [Achievements.THOUSANDFOLD]…[Achievements.TRILLION].
-     */
-    private val audioMilestoneThresholds = listOf(
-        BigInteger.valueOf(1_000L),
-        BigInteger.valueOf(10_000L),
-        BigInteger.valueOf(100_000L),
-        BigInteger.valueOf(1_000_000L),
-        BigInteger.valueOf(10_000_000L),
-        BigInteger.valueOf(100_000_000L),
-        BigInteger.valueOf(1_000_000_000L),
-        BigInteger("1000000000000")
-    )
 
     /**
      * Current angular velocity in radians per second.
@@ -420,7 +381,7 @@ class WheelViewModel(
      * Highest lifetime-milestone tier the practitioner has crossed (0 = none,
      * 1 = 1K, … 8 = 1T). Drives the persistent aura floor: even at rest, a
      * practitioner with 1B+ lifetime mantras sees a gentle glow on their wheel.
-     * Indices align with [audioMilestoneThresholds] (tier = index + 1).
+     * Indices align with [Milestones.MILESTONE_THRESHOLDS] (tier = index + 1).
      */
     private val _highestMilestoneTier = MutableStateFlow(0)
     val highestMilestoneTier: StateFlow<Int> = _highestMilestoneTier.asStateFlow()
@@ -571,7 +532,7 @@ class WheelViewModel(
     private var sessionStartRpmSum = 0f
 
     // Drag tracking
-    private val dragHistory = mutableListOf<DragEvent>()
+    private val dragHistory = mutableListOf<SpinPhysics.DragSample>()
     private var sessionStartTime: Long? = null
     private var currentSessionRotations = 0L
     private var currentSessionMantras = BigInteger.ZERO
@@ -816,25 +777,11 @@ class WheelViewModel(
                 sessionDao.observeSessionsForDay(window.first, window.second)
                     .map { sessions -> sessions to eveningHour }
             }.collect { (sessions, eveningHour) ->
-                var morning = false
-                var evening = false
-                var mantras = BigInteger.ZERO
-                var practiceMs = 0L
-                val calendar = Calendar.getInstance(TimeZone.getDefault())
-                for (session in sessions) {
-                    calendar.timeInMillis = session.startedAt
-                    val hour = calendar.get(Calendar.HOUR_OF_DAY)
-                    if (hour < eveningHour) morning = true else evening = true
-                    mantras = mantras.add(session.totalMantras)
-                    val endMs = session.endedAt ?: session.startedAt
-                    if (endMs >= session.startedAt) {
-                        practiceMs += (endMs - session.startedAt)
-                    }
-                }
-                _todayMorningCompleted.value = morning
-                _todayEveningCompleted.value = evening
-                _todayMantraCount.value = mantras
-                _todayPracticeSeconds.value = practiceMs / 1000L
+                val progress = SessionRules.todayProgress(sessions, eveningHour, ZoneId.systemDefault())
+                _todayMorningCompleted.value = progress.morningCompleted
+                _todayEveningCompleted.value = progress.eveningCompleted
+                _todayMantraCount.value = progress.mantras
+                _todayPracticeSeconds.value = progress.practiceSeconds
             }
         }
     }
@@ -973,9 +920,9 @@ class WheelViewModel(
             checkRotationCompletion(angularDiff)
         }
 
-        dragHistory.add(DragEvent(angle, timestamp))
+        dragHistory.add(SpinPhysics.DragSample(angle, timestamp))
         // Keep only last 5 events for velocity calculation
-        while (dragHistory.size > 5) {
+        while (dragHistory.size > SpinPhysics.DRAG_HISTORY_SIZE) {
             dragHistory.removeAt(0)
         }
     }
@@ -985,11 +932,10 @@ class WheelViewModel(
      */
     private fun checkLeftRotationCompletion(angularDiff: Float) {
         val totalRotation = _leftRotationAngle.value
-        val newRevolutions = (totalRotation / TWO_PI).toLong()
-        val oldRevolutions = ((totalRotation - angularDiff) / TWO_PI).toLong()
-        if (newRevolutions > oldRevolutions) {
-            _leftRotationCount.value += (newRevolutions - oldRevolutions)
-            onDualWheelRotationComplete(newRevolutions - oldRevolutions)
+        val crossed = SpinPhysics.revolutionsCrossed(totalRotation - angularDiff, totalRotation)
+        if (crossed > 0) {
+            _leftRotationCount.value += crossed
+            onDualWheelRotationComplete(crossed)
         }
     }
 
@@ -998,11 +944,10 @@ class WheelViewModel(
      */
     private fun checkRightRotationCompletion(angularDiff: Float) {
         val totalRotation = _rightRotationAngle.value
-        val newRevolutions = (totalRotation / TWO_PI).toLong()
-        val oldRevolutions = ((totalRotation - angularDiff) / TWO_PI).toLong()
-        if (newRevolutions > oldRevolutions) {
-            _rightRotationCount.value += (newRevolutions - oldRevolutions)
-            onDualWheelRotationComplete(newRevolutions - oldRevolutions)
+        val crossed = SpinPhysics.revolutionsCrossed(totalRotation - angularDiff, totalRotation)
+        if (crossed > 0) {
+            _rightRotationCount.value += crossed
+            onDualWheelRotationComplete(crossed)
         }
     }
 
@@ -1029,49 +974,12 @@ class WheelViewModel(
      * Called on pointer up - calculates flick velocity and starts momentum.
      */
     fun onDragEnd() {
-        if (dragHistory.size >= 2) {
-            // Use weighted average of last 3-5 events for smoother velocity
-            val eventsToConsider = dragHistory.takeLast(5)
-            var totalWeightedAngularDiff = 0f
-            var totalWeight = 0f
-
-            eventsToConsider.forEachIndexed { index, event ->
-                val weight = (index + 1).toFloat() // More recent events have higher weight
-                if (index > 0) {
-                    val prevEvent = eventsToConsider[index - 1]
-                    val timeDelta = (event.timestamp - prevEvent.timestamp).coerceAtLeast(1L) / 1000f
-                    if (timeDelta > 0) {
-                        var angularDiff = event.angle - prevEvent.angle
-                        // Handle angle wrap-around for clockwise detection
-                        if (angularDiff > PI) angularDiff -= TWO_PI
-                        if (angularDiff < -PI) angularDiff += TWO_PI
-                        totalWeightedAngularDiff += (angularDiff / timeDelta) * weight
-                        totalWeight += weight
-                    }
-                }
+        SpinPhysics.flickVelocity(dragHistory, _counterClockwiseEnabled.value)?.let { flick ->
+            if (flick.showCounterClockwiseReminder) {
+                // Show gentle reminder but still allow the motion
+                showCounterClockwiseReminder()
             }
-
-            if (totalWeight > 0) {
-                var velocity = totalWeightedAngularDiff / totalWeight
-
-                // Apply flick velocity multiplier for stronger spinning
-                velocity *= FLICK_VELOCITY_MULTIPLIER
-
-                // Check for counter-clockwise motion (only trigger for intentional CCW flicks)
-                if (velocity < -MIN_COUNTER_CLOCKWISE_VELOCITY) {
-                    // Significant counter-clockwise detected
-                    if (!_counterClockwiseEnabled.value) {
-                        // Show gentle reminder but still allow the motion
-                        showCounterClockwiseReminder()
-                    }
-                    velocity = velocity.coerceIn(-MAX_ANGULAR_VELOCITY, 0f)
-                } else {
-                    // Clockwise - apply higher cap
-                    velocity = velocity.coerceIn(0f, MAX_ANGULAR_VELOCITY)
-                }
-
-                _angularVelocity.value = velocity
-            }
+            _angularVelocity.value = flick.velocity
         }
 
         startSessionIfNeeded()
@@ -1405,23 +1313,8 @@ class WheelViewModel(
             // interleave with session-end, undo-delete, or subtract operations.
             val newTotalMantras = lifetimeStatsMutex.withLock {
                 val existing = lifetimeStatsDao.getStats()
-                val updated = existing?.copy(
-                    totalRotations = existing.totalRotations + session.rotationCount,
-                    totalMantras = existing.totalMantras + session.totalMantras,
-                    sessionsCompleted = existing.sessionsCompleted + 1,
-                    totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + durationSeconds,
-                    averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                        (existing.totalSpinningTimeSeconds + durationSeconds) / (existing.sessionsCompleted + 1)
-                    } else durationSeconds
-                ) ?: LifetimeStats(
-                    id = 1,
-                    totalRotations = session.rotationCount,
-                    totalMantras = session.totalMantras,
-                    sessionsCompleted = 1,
-                    firstSessionAt = session.startedAt,
-                    totalSpinningTimeSeconds = durationSeconds,
-                    averageSessionDurationSeconds = durationSeconds
-                )
+                // Duration is the user-entered value (not endedAt - startedAt).
+                val updated = LifetimeStatsMath.plusSession(existing, session, durationSeconds)
                 lifetimeStatsDao.upsert(updated)
                 updated.totalMantras
             }
@@ -1455,27 +1348,11 @@ class WheelViewModel(
     fun undoDeleteSession(session: Session) {
         viewModelScope.launch {
             sessionDao.insert(session)
-            val sessionDurationSeconds = ((session.endedAt ?: session.startedAt) - session.startedAt) / 1000
+            val sessionDurationSeconds = LifetimeStatsMath.storedDurationSeconds(session)
             // Hold the mutex across read-modify-write to serialize with other lifetime_stats writers.
             lifetimeStatsMutex.withLock {
                 val existing = lifetimeStatsDao.getStats()
-                val newStats = existing?.copy(
-                    totalRotations = existing.totalRotations + session.rotationCount,
-                    totalMantras = existing.totalMantras + session.totalMantras,
-                    sessionsCompleted = existing.sessionsCompleted + 1,
-                    totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
-                    averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                        (existing.totalSpinningTimeSeconds + sessionDurationSeconds) / (existing.sessionsCompleted + 1)
-                    } else sessionDurationSeconds
-                ) ?: LifetimeStats(
-                    id = 1,
-                    totalRotations = session.rotationCount,
-                    totalMantras = session.totalMantras,
-                    sessionsCompleted = 1,
-                    firstSessionAt = session.startedAt,
-                    totalSpinningTimeSeconds = sessionDurationSeconds,
-                    averageSessionDurationSeconds = sessionDurationSeconds
-                )
+                val newStats = LifetimeStatsMath.plusSession(existing, session, sessionDurationSeconds)
                 lifetimeStatsDao.upsert(newStats)
             }
         }
@@ -1486,17 +1363,8 @@ class WheelViewModel(
         // manual log, undo-delete) can't interleave with this subtraction and clobber it.
         lifetimeStatsMutex.withLock {
             val existing = lifetimeStatsDao.getStats() ?: return@withLock
-            val sessionDuration = ((session.endedAt ?: session.startedAt) - session.startedAt) / 1000
-            val newCount = (existing.sessionsCompleted - 1).coerceAtLeast(0)
-            val newStats = existing.copy(
-                totalRotations = (existing.totalRotations - session.rotationCount).coerceAtLeast(0),
-                totalMantras = (existing.totalMantras - session.totalMantras).coerceAtLeast(java.math.BigInteger.ZERO),
-                sessionsCompleted = newCount,
-                totalSpinningTimeSeconds = (existing.totalSpinningTimeSeconds - sessionDuration).coerceAtLeast(0),
-                averageSessionDurationSeconds = if (newCount > 0) {
-                    (existing.totalSpinningTimeSeconds - sessionDuration).coerceAtLeast(0) / newCount
-                } else 0L
-            )
+            val sessionDuration = LifetimeStatsMath.storedDurationSeconds(session)
+            val newStats = LifetimeStatsMath.minusSession(existing, session, sessionDuration)
             lifetimeStatsDao.upsert(newStats)
         }
     }
@@ -1594,11 +1462,7 @@ class WheelViewModel(
     suspend fun detectResumableSession(): Session? {
         val recent = sessionDao.getMostRecentSession() ?: return null
         val now = System.currentTimeMillis()
-        val isRecent = recent.endedAt == null ||
-            (now - recent.startedAt) <= SESSION_NEW_THRESHOLD_MS
-        val hasRotations = recent.rotationCount > 0L
-        val isInterrupted = recent.dedication == null
-        return if (isRecent && hasRotations && isInterrupted) recent else null
+        return if (SessionRules.isResumable(recent, now, SESSION_NEW_THRESHOLD_MS)) recent else null
     }
 
     /**
@@ -1652,32 +1516,7 @@ class WheelViewModel(
             // Restart the session timer (mirrors startSessionIfNeeded). The
             // timeGoalReached flag is pre-set when the resumed session already
             // meets the goal so we don't immediately fire the milestone haptic.
-            sessionTimerJob?.cancel()
-            sessionTimerJob = viewModelScope.launch {
-                var timeGoalReached = _sessionTimeGoalSeconds.value > 0 &&
-                    _sessionDurationSeconds.value >= _sessionTimeGoalSeconds.value
-                while (isActive) {
-                    _sessionDuration.value = System.currentTimeMillis() - session.startedAt
-                    val newSeconds = _sessionDuration.value / 1000
-                    _sessionDurationSeconds.value = newSeconds
-
-                    val goalSecs = _sessionTimeGoalSeconds.value
-                    if (goalSecs > 0 && newSeconds >= goalSecs && !timeGoalReached) {
-                        timeGoalReached = true
-                        triggerMilestoneHaptic()
-                    }
-
-                    if (notificationActive && !_isPaused.value) {
-                        SessionNotificationService.update(
-                            newSeconds,
-                            _sessionMantras.value,
-                            paused = false
-                        )
-                    }
-
-                    delay(SESSION_TIMER_INTERVAL_MS)
-                }
-            }
+            startSessionTimer(session.startedAt, skipGoalIfAlreadyMet = true)
         }
     }
 
@@ -1792,23 +1631,8 @@ class WheelViewModel(
             lifetimeStatsMutex.withLock {
                 val existing = lifetimeStatsDao.getStats()
 
-                val updated = existing?.copy(
-                    totalRotations = existing.totalRotations + session.rotationCount,
-                    totalMantras = existing.totalMantras + session.totalMantras,
-                    sessionsCompleted = existing.sessionsCompleted + 1,
-                    totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
-                    averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                        (existing.totalSpinningTimeSeconds + sessionDurationSeconds) / (existing.sessionsCompleted + 1)
-                    } else sessionDurationSeconds
-                ) ?: LifetimeStats(
-                    id = 1,
-                    totalRotations = session.rotationCount,
-                    totalMantras = session.totalMantras,
-                    sessionsCompleted = 1,
-                    firstSessionAt = session.startedAt,
-                    totalSpinningTimeSeconds = sessionDurationSeconds,
-                    averageSessionDurationSeconds = sessionDurationSeconds
-                )
+                // Duration is the live session timer (_sessionDurationSeconds), not endedAt - startedAt.
+                val updated = LifetimeStatsMath.plusSession(existing, session, sessionDurationSeconds)
 
                 lifetimeStatsDao.upsert(updated)
                 updated
@@ -1827,8 +1651,9 @@ class WheelViewModel(
 
     private fun startSessionIfNeeded() {
         val now = System.currentTimeMillis()
-        val needsNewSession = sessionStartTime == null ||
-            (lastSessionEndTime != null && now - lastSessionEndTime!! > sessionMergeThresholdMs)
+        val needsNewSession = SessionRules.needsNewSession(
+            sessionStartTime, lastSessionEndTime, now, sessionMergeThresholdMs
+        )
 
         if (needsNewSession) {
             sessionStartTime = now
@@ -1847,44 +1672,53 @@ class WheelViewModel(
             // T15: auto-suggest morning/evening label. Attribution matches the rule in
             // observeTodayProgress() / TodayProgressCard — hour is strictly less than
             // reminderEveningHour for "morning", otherwise "evening". Null when disabled.
-            pendingSessionLabel = if (autoLabelSessionsEnabled) {
-                val cal = Calendar.getInstance(TimeZone.getDefault())
-                cal.timeInMillis = now
-                if (cal.get(Calendar.HOUR_OF_DAY) < cachedReminderEveningHour) "morning" else "evening"
-            } else {
-                null
-            }
+            pendingSessionLabel = SessionRules.autoLabel(
+                now, cachedReminderEveningHour, ZoneId.systemDefault(), autoLabelSessionsEnabled
+            )
 
             // Start notification service
             startNotificationService()
 
             // Start session timer
-            sessionTimerJob?.cancel()
-            sessionTimerJob = viewModelScope.launch {
-                val startTime = now
-                var timeGoalReached = false
-                while (isActive) {
-                    _sessionDuration.value = System.currentTimeMillis() - startTime
-                    val newSeconds = _sessionDuration.value / 1000
-                    _sessionDurationSeconds.value = newSeconds
+            startSessionTimer(now, skipGoalIfAlreadyMet = false)
+        }
+    }
 
-                    val goalSecs = _sessionTimeGoalSeconds.value
-                    if (goalSecs > 0 && newSeconds >= goalSecs && !timeGoalReached) {
-                        timeGoalReached = true
-                        triggerMilestoneHaptic()
-                    }
+    /**
+     * (Re)starts the 1 Hz session timer measuring elapsed time from [startTime].
+     * Fires the time-goal milestone haptic once when the goal is first reached
+     * and refreshes the foreground notification each tick.
+     *
+     * @param skipGoalIfAlreadyMet when true (resume path), the goal haptic is
+     *   suppressed if the restored duration already meets the goal at timer start.
+     */
+    private fun startSessionTimer(startTime: Long, skipGoalIfAlreadyMet: Boolean) {
+        sessionTimerJob?.cancel()
+        sessionTimerJob = viewModelScope.launch {
+            var timeGoalReached = skipGoalIfAlreadyMet &&
+                _sessionTimeGoalSeconds.value > 0 &&
+                _sessionDurationSeconds.value >= _sessionTimeGoalSeconds.value
+            while (isActive) {
+                _sessionDuration.value = System.currentTimeMillis() - startTime
+                val newSeconds = _sessionDuration.value / 1000
+                _sessionDurationSeconds.value = newSeconds
 
-                    // Update notification every second with current values
-                    if (notificationActive && !_isPaused.value) {
-                        SessionNotificationService.update(
-                            newSeconds,
-                            _sessionMantras.value,
-                            paused = false
-                        )
-                    }
-
-                    delay(SESSION_TIMER_INTERVAL_MS)
+                val goalSecs = _sessionTimeGoalSeconds.value
+                if (goalSecs > 0 && newSeconds >= goalSecs && !timeGoalReached) {
+                    timeGoalReached = true
+                    triggerMilestoneHaptic()
                 }
+
+                // Update notification every second with current values
+                if (notificationActive && !_isPaused.value) {
+                    SessionNotificationService.update(
+                        newSeconds,
+                        _sessionMantras.value,
+                        paused = false
+                    )
+                }
+
+                delay(SESSION_TIMER_INTERVAL_MS)
             }
         }
     }
@@ -1908,53 +1742,28 @@ class WheelViewModel(
                 lastFrameTime = currentTime
 
                 // Determine friction coefficient based on mode and state
-                val isTwoHandedMode = _spinMode.value == SpinMode.TWO_HANDED ||
-                                     _spinMode.value == SpinMode.TWO_HANDED_AUTO ||
-                                     (_twoHandedEnabled.value && _autoSpinEnabled.value)
+                val isTwoHandedMode = SpinPhysics.isTwoHandedMode(
+                    _spinMode.value, _twoHandedEnabled.value, _autoSpinEnabled.value
+                )
+
+                // Breath mode: microphone amplitude applies clockwise torque (0 when off).
+                val breathAmp = if (_breathModeEnabled.value)
+                    breathModeController?.amplitude?.value ?: 0f else 0f
 
                 // Calculate velocity - in auto mode we ramp toward target, otherwise apply friction
-                val currentOmega = _angularVelocity.value
-                val calculatedVelocity = if (_autoSpinEnabled.value && !isTwoHandedMode) {
-                    // Auto-spin: torque-limited ramp toward target RPM (~0.5-1.5s to reach set speed)
-                    val targetOmega = _autoSpinRpm.value * 2 * PI.toFloat() / 60f
-                    val gap = targetOmega - currentOmega
-                    val maxStepThisFrame = AUTO_SPIN_MAX_ACCEL_PER_FRAME * (deltaTime * 60f)
-                    currentOmega + gap.coerceIn(-maxStepThisFrame, maxStepThisFrame)
-                } else {
-                    // Manual / two-handed / coast / breath: friction decay ω_{t+1} = ω_t × (1 - μ × Δt)
-                    val frictionCoefficient = when {
-                        isTwoHandedMode && _twoHandedEngaged.value -> TWO_HANDED_FRICTION
-                        else -> _baseFriction.value
-                    }
-                    val frictionDecayed = currentOmega * (1f - frictionCoefficient * deltaTime)
+                val calculatedVelocity = SpinPhysics.stepVelocity(
+                    currentOmega = _angularVelocity.value,
+                    deltaTime = deltaTime,
+                    autoSpinEnabled = _autoSpinEnabled.value,
+                    isTwoHandedMode = isTwoHandedMode,
+                    twoHandedEngaged = _twoHandedEngaged.value,
+                    autoSpinRpm = _autoSpinRpm.value,
+                    baseFriction = _baseFriction.value,
+                    weightAngleDegrees = _weightAngle.value,
+                    breathAmplitude = breathAmp
+                )
 
-                    // Weight→wheel coupling: the chain weight acts as a pendulum restoring force.
-                    // Applied as additional friction opposing motion, capped to never reverse direction.
-                    val weightAngleRad = _weightAngle.value * PI.toFloat() / 180f
-                    val couplingDecel = WEIGHT_COUPLING_COEFFICIENT * sin(weightAngleRad) * deltaTime
-                    val withCoupling = when {
-                        frictionDecayed > 0f -> (frictionDecayed - couplingDecel).coerceAtLeast(0f)
-                        frictionDecayed < 0f -> (frictionDecayed + couplingDecel).coerceAtMost(0f)
-                        else -> frictionDecayed
-                    }
-
-                    // Breath mode: microphone amplitude applies clockwise torque proportional
-                    // to loudness, alongside the existing friction/weight forces. This is purely
-                    // additive — no existing physics formula is modified.
-                    val breathAmp = if (_breathModeEnabled.value)
-                        breathModeController?.amplitude?.value ?: 0f else 0f
-                    val withBreath = if (breathAmp > 0f) {
-                        withCoupling + breathAmp * BREATH_TORQUE * deltaTime
-                    } else withCoupling
-
-                    // Static friction: clean halt when very slow and no torque applied this frame.
-                    // Breath is allowed to accumulate from rest (otherwise tiny per-frame breath
-                    // torque could never break through the 0.05 rad/s threshold).
-                    if (breathAmp > BREATH_ACTIVE_THRESHOLD) withBreath
-                    else if (abs(withBreath) < STATIC_FRICTION_THRESHOLD) 0f else withBreath
-                }
-
-                _angularVelocity.value = if (abs(calculatedVelocity) < STOP_THRESHOLD) 0f else calculatedVelocity
+                _angularVelocity.value = SpinPhysics.snapToStop(calculatedVelocity)
 
                 // Update rotation angle
                 val deltaAngle = calculatedVelocity * deltaTime
@@ -1963,23 +1772,19 @@ class WheelViewModel(
                 _rotationAngle.value = newAngle
 
                 // Count rotations when crossing 2π boundary
-                val oldRevolutions = (oldAngle / TWO_PI).toLong()
-                val newRevolutions = (newAngle / TWO_PI).toLong()
-                if (newRevolutions > oldRevolutions) {
-                    onRotationComplete(newRevolutions - oldRevolutions)
+                val crossed = SpinPhysics.revolutionsCrossed(oldAngle, newAngle)
+                if (crossed > 0) {
+                    onRotationComplete(crossed)
                 }
 
                 // Update RPM tracking: RPM = |ω| * 60 / (2π)
-                val currentRpm = abs(_angularVelocity.value) * 60f / TWO_PI
+                val currentRpm = SpinPhysics.rpm(_angularVelocity.value)
                 _currentRpm.value = currentRpm
                 audioEngine?.updateDrone(currentRpm)
 
                 // Calculate weight angle based on centrifugal force
-                // angle = atan(rpm / 30) clamped to 0..80 degrees
-                val targetWeightAngle = (kotlin.math.atan(currentRpm.toDouble() / 30.0) * 180.0 / PI).toFloat()
-                    .coerceIn(0f, 80f)
-                // Smooth interpolation toward target angle
-                _weightAngle.value += (targetWeightAngle - _weightAngle.value) * 0.1f
+                // (atan(rpm / 30) clamped to 0..80 degrees), smoothly interpolated.
+                _weightAngle.value = SpinPhysics.stepWeightAngle(_weightAngle.value, currentRpm)
 
                 // Track peak RPM
                 if (currentRpm > _peakRpm.value) {
@@ -2021,7 +1826,7 @@ class WheelViewModel(
                 // Spawn new particles while spinning
                 val velocity = abs(_angularVelocity.value)
                 if (velocity > STOP_THRESHOLD && canvasWidth > 0 && canvasHeight > 0) {
-                    val spawnProbability = tieredParticleSpawnProbability(velocity)
+                    val spawnProbability = SpinPhysics.particleSpawnProbability(velocity)
                     // Scale spawn by background animation intensity (0=off, 1=subtle, 2=full).
                     // Off => 0 spawns; subtle => 0.15x; full => 1.0x.
                     val intensityScale = _bgAnimationIntensity.value / 2f
@@ -2058,21 +1863,6 @@ class WheelViewModel(
         _isSpinning.value = false
     }
 
-    /**
-     * Per-frame star-particle spawn probability, tiered across the RPM range.
-     * Boundary ω values are 20/50/90/120 RPM × 2π/60 ≈ 2.0944/5.2359/9.4247/12.566.
-     * Tier 4 (Dissolving) caps at the [MAX_ANGULAR_VELOCITY] devotional ceiling.
-     */
-    private fun tieredParticleSpawnProbability(angularVelocity: Float): Float {
-        val omega = abs(angularVelocity)
-        return when {
-            omega <= 2.0944f -> 0f
-            omega <= 5.2359f -> ((omega - 2.0944f) / (5.2359f - 2.0944f)) * 0.15f
-            omega <= 9.4247f -> 0.15f + ((omega - 5.2359f) / (9.4247f - 5.2359f)) * (0.35f - 0.15f)
-            else -> 0.35f + ((omega - 9.4247f) / (MAX_ANGULAR_VELOCITY - 9.4247f)).coerceIn(0f, 1f) * (0.6f - 0.35f)
-        }
-    }
-
     private fun scheduleSessionSave() {
         sessionStopJob?.cancel()
         sessionStopJob = viewModelScope.launch {
@@ -2103,9 +1893,7 @@ class WheelViewModel(
             // Singing bowl at lifetime-mantra milestones (1K → 1T, tiers 0-7).
             // Use indexOfLast so a single high-capacity rotation that crosses
             // several thresholds plays the brightest tier reached, not the first.
-            val tierCrossed = audioMilestoneThresholds.indexOfLast { threshold ->
-                previousTotalMantras < threshold && newTotalMantras >= threshold
-            }
+            val tierCrossed = Milestones.highestTierCrossed(previousTotalMantras, newTotalMantras)
             if (tierCrossed >= 0) {
                 audioEngine?.playBowlTone(tierCrossed)
             }
@@ -2266,37 +2054,30 @@ class WheelViewModel(
     }
 
     /**
-     * Recomputes [_highestMilestoneTier] from a lifetime-mantra total. Tier is
-     * the count of [audioMilestoneThresholds] entries the total has reached or
-     * exceeded (1..8), or 0 if below the lowest threshold. Idempotent.
+     * Recomputes [_highestMilestoneTier] from a lifetime-mantra total via
+     * [Milestones.tierFor]. Idempotent.
      */
     private fun updateHighestMilestoneTier(lifetimeMantras: BigInteger) {
-        var tier = 0
-        for ((i, threshold) in audioMilestoneThresholds.withIndex()) {
-            if (lifetimeMantras >= threshold) tier = i + 1
-        }
-        _highestMilestoneTier.value = tier
+        _highestMilestoneTier.value = Milestones.tierFor(lifetimeMantras)
     }
 
     private suspend fun checkAchievements(totalMantras: BigInteger) {
         val currentlyUnlocked = _unlockedAchievements.value
-        val allAchievements = Achievements.ALL
-        
-        for (achievement in allAchievements) {
-            if (achievement.id !in currentlyUnlocked && totalMantras >= achievement.mantrasRequired) {
-                userPreferences.unlockAchievement(achievement.id)
-                val tierIndex = audioMilestoneThresholds.indexOfFirst { it == achievement.mantrasRequired }
-                if (tierIndex < 0) {
-                    Log.w(
-                        "WheelViewModel",
-                        "Unlocked achievement ${achievement.id} (mantrasRequired=${
-                            achievement.mantrasRequired}) has no matching audio milestone threshold"
-                    )
-                }
-                val tier = tierIndex.coerceIn(0, 7)
-                triggerMilestoneHaptic(tier)
-                _newlyUnlockedAchievement.value = achievement
+        // currentlyUnlocked is a snapshot, so filtering up front is equivalent to the
+        // previous per-iteration check.
+        for (achievement in Milestones.newlyUnlocked(totalMantras, currentlyUnlocked)) {
+            userPreferences.unlockAchievement(achievement.id)
+            val tierIndex = Milestones.thresholdIndexOf(achievement.mantrasRequired)
+            if (tierIndex < 0) {
+                Log.w(
+                    "WheelViewModel",
+                    "Unlocked achievement ${achievement.id} (mantrasRequired=${
+                        achievement.mantrasRequired}) has no matching audio milestone threshold"
+                )
             }
+            val tier = tierIndex.coerceIn(0, 7)
+            triggerMilestoneHaptic(tier)
+            _newlyUnlockedAchievement.value = achievement
         }
     }
 
@@ -2307,45 +2088,25 @@ class WheelViewModel(
     private fun calculateAngularChange(newAngle: Float): Float {
         if (dragHistory.isEmpty()) return 0f
         val lastAngle = dragHistory.last().angle
-        var diff = newAngle - lastAngle
         // Normalize to [-PI, PI]
-        while (diff > PI) diff -= TWO_PI
-        while (diff < -PI) diff += TWO_PI
-        return diff
+        return SpinPhysics.normalizeAngle(newAngle - lastAngle)
     }
 
     private fun checkRotationCompletion(angularDiff: Float) {
         // Track cumulative rotation for counting
         val totalRotation = _rotationAngle.value
-        val newRevolutions = (totalRotation / TWO_PI).toLong()
-        val oldRevolutions = ((totalRotation - angularDiff) / TWO_PI).toLong()
-        if (newRevolutions > oldRevolutions) {
-            _rotationCount.value += (newRevolutions - oldRevolutions)
-            onRotationComplete(newRevolutions - oldRevolutions)
+        val crossed = SpinPhysics.revolutionsCrossed(totalRotation - angularDiff, totalRotation)
+        if (crossed > 0) {
+            _rotationCount.value += crossed
+            onRotationComplete(crossed)
         }
     }
 
     private fun triggerHapticTick() {
         if (!shouldVibrate()) return
         val rpm = _currentRpm.value
-        triggerScaledHaptic(getTickDuration(rpm), getTickAmplitudeScale(rpm))
-    }
-
-    /**
-     * Rotation-tick duration scales inversely with RPM: slow turns produce long,
-     * distinct mechanical clicks (prayer beads through fingers); fast turns
-     * dissolve into a smooth hum as individual clicks merge.
-     */
-    private fun getTickDuration(rpm: Float): Long = when {
-        rpm < 30f -> 8L
-        rpm < 60f -> 5L
-        else -> 3L
-    }
-
-    private fun getTickAmplitudeScale(rpm: Float): Float = when {
-        rpm < 30f -> 1.0f
-        rpm < 60f -> 0.7f
-        else -> 0.45f
+        // Tick duration/amplitude scale inversely with RPM (see HapticPatterns).
+        triggerScaledHaptic(HapticPatterns.tickDurationMs(rpm), HapticPatterns.tickAmplitudeScale(rpm))
     }
 
     private fun triggerHapticPause() {
@@ -2366,44 +2127,22 @@ class WheelViewModel(
     }
 
     /**
-     * Milestone haptic patterns scale with milestone magnitude (tiers 0–7,
-     * matching [audioMilestoneThresholds]: 1K, 10K, 100K, 1M, 10M, 100M, 1B, 1T).
-     *
-     *  tiers 0–1 — acknowledgment : single pulse
-     *  tiers 2–3 — celebration    : double pulse
-     *  tiers 4–5 — resonance      : triple pulse, building
-     *  tiers 6–7 — cosmic moment  : sustained rising waveform
+     * Plays the milestone haptic for [tier] (0–7, matching
+     * [Milestones.MILESTONE_THRESHOLDS]); the pattern choice lives in
+     * [HapticPatterns.milestonePattern].
      */
     private fun triggerMilestoneHapticInternal(tier: Int) {
         val intensity = _vibrationIntensity.value
-        fun amp(base: Int) = (base * intensity).toInt().coerceIn(1, 255)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val effect: VibrationEffect = when (tier / 2) {
-                0 -> VibrationEffect.createOneShot(HAPTIC_MILESTONE_DURATION, amp(200))
-                1 -> VibrationEffect.createWaveform(
-                    longArrayOf(0, HAPTIC_MILESTONE_DURATION, 50, HAPTIC_MILESTONE_DURATION),
-                    intArrayOf(0, amp(210), 0, amp(210)),
-                    -1
-                )
-                2 -> VibrationEffect.createWaveform(
-                    longArrayOf(0, HAPTIC_MILESTONE_DURATION, 40, HAPTIC_MILESTONE_DURATION, 40, 30),
-                    intArrayOf(0, amp(210), 0, amp(225), 0, amp(245)),
-                    -1
-                )
-                else -> VibrationEffect.createWaveform(
-                    longArrayOf(0, 30, 60, 40, 60, 50, 80, 80),
-                    intArrayOf(0, amp(150), 0, amp(200), 0, amp(230), 0, amp(255)),
-                    -1
-                )
+            val effect: VibrationEffect = when (val pattern = HapticPatterns.milestonePattern(tier, intensity)) {
+                is HapticPatterns.Pattern.OneShot ->
+                    VibrationEffect.createOneShot(pattern.durationMs, pattern.amplitude)
+                is HapticPatterns.Pattern.Waveform ->
+                    VibrationEffect.createWaveform(pattern.timings, pattern.amplitudes, -1)
             }
             vibrator.vibrate(effect)
         } else {
-            val durationMs = when (tier / 2) {
-                0 -> HAPTIC_MILESTONE_DURATION
-                1 -> 90L
-                2 -> 130L
-                else -> 400L
-            }
+            val durationMs = HapticPatterns.legacyMilestoneDurationMs(tier)
             @Suppress("DEPRECATION")
             vibrator.vibrate(durationMs)
         }
@@ -2412,7 +2151,7 @@ class WheelViewModel(
     private fun triggerScaledHaptic(durationMs: Long, amplitudeScale: Float) {
         val intensity = _vibrationIntensity.value
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val amplitude = (255 * amplitudeScale * intensity).toInt().coerceIn(1, 255)
+            val amplitude = HapticPatterns.scaledTickAmplitude(amplitudeScale, intensity)
             vibrator.vibrate(VibrationEffect.createOneShot(durationMs, amplitude))
         } else {
             @Suppress("DEPRECATION")
@@ -2485,8 +2224,7 @@ class WheelViewModel(
     private fun triggerHaptic(durationMs: Long) {
         val intensity = _vibrationIntensity.value
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val amplitude = (VibrationEffect.DEFAULT_AMPLITUDE * intensity).toInt()
-                .coerceIn(1, 255)
+            val amplitude = HapticPatterns.scaledAmplitude(VibrationEffect.DEFAULT_AMPLITUDE, intensity)
             val effect = VibrationEffect.createOneShot(durationMs, amplitude)
             vibrator.vibrate(effect)
         } else {
@@ -2525,11 +2263,6 @@ class WheelViewModel(
         audioEngine?.release()
         breathModeController?.stop()
     }
-
-    private data class DragEvent(
-        val angle: Float,
-        val timestamp: Long
-    )
 
     /**
      * Factory for creating WheelViewModel with dependencies.
