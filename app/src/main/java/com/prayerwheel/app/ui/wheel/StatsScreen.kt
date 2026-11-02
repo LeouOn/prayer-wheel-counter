@@ -347,7 +347,7 @@ private fun TimePeriodSummaryCard(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
                     Text(
-                        text = "${last7DaysStats?.sessionCount ?: 0} sessions, ${formatNumber(last7DaysStats?.totalMantras ?: 0L)} mantras",
+                        text = "${last7DaysStats?.sessionCount ?: 0} sessions, ${formatBigNumber(last7DaysStats?.totalMantras ?: BigInteger.ZERO)} mantras",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -368,7 +368,7 @@ private fun TimePeriodSummaryCard(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
                     Text(
-                        text = "${last30DaysStats?.sessionCount ?: 0} sessions, ${formatNumber(last30DaysStats?.totalMantras ?: 0L)} mantras",
+                        text = "${last30DaysStats?.sessionCount ?: 0} sessions, ${formatBigNumber(last30DaysStats?.totalMantras ?: BigInteger.ZERO)} mantras",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -389,7 +389,7 @@ private fun TimePeriodSummaryCard(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
                     Text(
-                        text = "${allTimeStats?.sessionCount ?: 0} sessions, ${formatNumber(allTimeStats?.totalMantras ?: 0L)} mantras",
+                        text = "${allTimeStats?.sessionCount ?: 0} sessions, ${formatBigNumber(allTimeStats?.totalMantras ?: BigInteger.ZERO)} mantras",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -475,7 +475,7 @@ private fun MantraStatsCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
                 Text(
-                    text = "${formatNumber(stats.totalMantras)} mantras",
+                    text = "${formatBigNumber(stats.totalMantras)} mantras",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
@@ -577,7 +577,7 @@ private fun WheelStatsCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
                 Text(
-                    text = "${formatNumber(stats.totalMantras)} mantras",
+                    text = "${formatBigNumber(stats.totalMantras)} mantras",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )

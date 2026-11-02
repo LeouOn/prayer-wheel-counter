@@ -86,29 +86,70 @@ class SessionRulesTest {
 
     @Test
     fun needsNewSession_noActiveSession_isTrue() {
-        assertTrue(SessionRules.needsNewSession(null, null, now, window))
-        assertTrue(SessionRules.needsNewSession(null, now, now, window))
+        assertTrue(SessionRules.needsNewSession(null))
     }
 
     @Test
-    fun needsNewSession_activeAndNoPriorEnd_isFalse() {
-        assertFalse(SessionRules.needsNewSession(now - 1_000_000, null, now, window))
+    fun needsNewSession_activeSession_isFalse() {
+        assertFalse(SessionRules.needsNewSession(now - 1_000_000))
+        assertFalse(SessionRules.needsNewSession(now))
     }
 
     @Test
-    fun needsNewSession_mergeThresholdEdge() {
-        assertFalse(SessionRules.needsNewSession(now - 1_000, now - window, now, window))
-        assertTrue(SessionRules.needsNewSession(now - 1_000, now - window - 1, now, window))
-    }
-
-    @Test
-    fun currentBehavior_needsNewSession_activeSessionResetOnceLastEndIsStale() {
-        // Session A was dedicated at T0; session B started at T0+1min and is still active.
-        // Once T0 is more than the merge threshold in the past, every call reports true,
-        // so the VM re-initializes (zeroes) the in-progress session B on the next flick.
+    fun needsNewSession_activeSessionNeverResetAfterEarlierDedicatedSession() {
+        // Regression: session A was dedicated at T0; session B started at T0+1min and
+        // is still active. Long after T0 (beyond any merge threshold) further flicks
+        // must keep accumulating into B instead of zeroing it.
         val t0 = now - 6 * 60_000L
         val activeStart = t0 + 60_000L
-        assertTrue(SessionRules.needsNewSession(activeStart, t0, now, window))
+        assertFalse(SessionRules.needsNewSession(activeStart))
+    }
+
+    // ── endedSessionDurationSeconds ─────────────────────────────────────
+
+    @Test
+    fun endedSessionDuration_isFixedAtSessionEnd_truncatedAndNonNegative() {
+        val start = now - 600_000L
+        assertEquals(600L, SessionRules.endedSessionDurationSeconds(start, now))
+        assertEquals(0L, SessionRules.endedSessionDurationSeconds(start, start + 999))
+        assertEquals(0L, SessionRules.endedSessionDurationSeconds(start, start - 5_000))
+    }
+
+    // ── dayWindow ──────────────────────────────────────────────────────
+
+    @Test
+    fun dayWindow_isLocalMidnightToMidnight() {
+        val w = SessionRules.dayWindow(utcMillis(15, 30), utc)
+        assertEquals(java.time.LocalDate.of(2026, 3, 10), w.date)
+        assertEquals(utcMillis(0), w.startMs)
+        assertEquals(utcMillis(0) + 86_400_000L, w.endMs)
+    }
+
+    @Test
+    fun dayWindow_newYearAfterOvernight_isTheNewDay() {
+        val ny = ZoneId.of("America/New_York")
+        val jan1 = ZonedDateTime.of(2027, 1, 1, 7, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val w = SessionRules.dayWindow(jan1, ny)
+        assertEquals(java.time.LocalDate.of(2027, 1, 1), w.date)
+        assertEquals(ZonedDateTime.of(2027, 1, 1, 0, 0, 0, 0, ny).toInstant().toEpochMilli(), w.startMs)
+    }
+
+    @Test
+    fun dayWindow_dstDaysAre23And25Hours() {
+        val ny = ZoneId.of("America/New_York")
+        val spring = ZonedDateTime.of(2026, 3, 8, 12, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val fall = ZonedDateTime.of(2026, 11, 1, 12, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val sw = SessionRules.dayWindow(spring, ny)
+        val fw = SessionRules.dayWindow(fall, ny)
+        assertEquals(23 * 3_600_000L, sw.endMs - sw.startMs)
+        assertEquals(25 * 3_600_000L, fw.endMs - fw.startMs)
+    }
+
+    @Test
+    fun dayWindow_followsZoneChange() {
+        val instant = utcMillis(22) // 22:00 UTC on Mar 10 = Mar 11 in Tokyo
+        assertEquals(java.time.LocalDate.of(2026, 3, 10), SessionRules.dayWindow(instant, utc).date)
+        assertEquals(java.time.LocalDate.of(2026, 3, 11), SessionRules.dayWindow(instant, ZoneId.of("Asia/Tokyo")).date)
     }
 
     // ── autoLabel / isMorning ──────────────────────────────────────────

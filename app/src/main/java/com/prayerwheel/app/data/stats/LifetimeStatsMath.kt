@@ -17,18 +17,20 @@ object LifetimeStatsMath {
      * Adds one session to [existing]. When there is no row yet, creates the
      * singleton row (id = 1) seeded from the session.
      *
-     * Current behavior (pinned by tests): when a row already exists,
-     * `firstSessionAt` is carried over unchanged — even if it is null (e.g.
-     * after a lifetime reset) or later than the session's start.
+     * `firstSessionAt` is the earliest start among credited sessions: it is
+     * refilled after a lifetime reset (null) and lowered for backdated logs.
      */
     fun plusSession(existing: LifetimeStats?, session: Session, durationSeconds: Long): LifetimeStats =
         existing?.copy(
-            totalRotations = existing.totalRotations + session.rotationCount,
+            // Long counters saturate instead of wrapping negative (manual logs
+            // accept arbitrarily large rotation counts / durations).
+            totalRotations = saturatingAdd(existing.totalRotations, session.rotationCount),
             totalMantras = existing.totalMantras + session.totalMantras,
             sessionsCompleted = existing.sessionsCompleted + 1,
-            totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + durationSeconds,
+            firstSessionAt = minOf(existing.firstSessionAt ?: session.startedAt, session.startedAt),
+            totalSpinningTimeSeconds = saturatingAdd(existing.totalSpinningTimeSeconds, durationSeconds),
             averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                (existing.totalSpinningTimeSeconds + durationSeconds) / (existing.sessionsCompleted + 1)
+                saturatingAdd(existing.totalSpinningTimeSeconds, durationSeconds) / (existing.sessionsCompleted + 1)
             } else durationSeconds
         ) ?: LifetimeStats(
             id = 1,
@@ -55,6 +57,15 @@ object LifetimeStatsMath {
                 (existing.totalSpinningTimeSeconds - durationSeconds).coerceAtLeast(0) / newCount
             } else 0L
         )
+    }
+
+    /** Long addition that clamps at [Long.MAX_VALUE]/[Long.MIN_VALUE] instead of wrapping. */
+    fun saturatingAdd(a: Long, b: Long): Long {
+        val r = a + b
+        // Overflow iff both operands have the same sign and the result's sign differs.
+        return if (((a xor r) and (b xor r)) < 0) {
+            if (a < 0) Long.MIN_VALUE else Long.MAX_VALUE
+        } else r
     }
 
     /** Session duration as `(endedAt ?: startedAt) − startedAt`, in whole seconds (truncated). */

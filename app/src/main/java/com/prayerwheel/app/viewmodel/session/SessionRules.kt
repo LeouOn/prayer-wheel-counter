@@ -3,6 +3,7 @@ package com.prayerwheel.app.viewmodel.session
 import com.prayerwheel.app.data.model.Session
 import java.math.BigInteger
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 
 /**
@@ -35,22 +36,52 @@ object SessionRules {
     }
 
     /**
-     * Whether a call to start-session-if-needed should (re)initialize the session.
-     * True when no session is active, or when the last *dedicated* session ended
-     * more than [mergeThresholdMs] ago.
+     * Whether a call to start-session-if-needed should (re)initialize the session:
+     * true only when no session is active.
      *
-     * Current behavior (pinned by tests): the second clause does not look at
-     * whether a session is currently active, so an active session is reported
-     * as needing a fresh start once [lastSessionEndTimeMs] is stale.
+     * An active session is NEVER reset here. Every drag/flick/auto-spin start
+     * calls this, so returning true for an in-progress session silently zeroed
+     * its rotations, mantras and start time without saving them. (The original
+     * rule also returned true whenever the last *dedicated* session had ended
+     * more than the merge threshold ago, and that timestamp was never cleared —
+     * so after the first dedicated session every subsequent flick wiped the
+     * live session.)
+     *
+     * The "session merge threshold" setting is described in Settings as "how
+     * long after a session ends before a new spin counts as a new session", i.e.
+     * it may only decide what happens when there is *no* active session. Since
+     * an ended session is always persisted and cleared through the dedication
+     * flow, there is currently no ended-but-mergeable session to continue, so
+     * the threshold has no effect on this decision.
      */
-    fun needsNewSession(
-        sessionStartTimeMs: Long?,
-        lastSessionEndTimeMs: Long?,
-        nowMs: Long,
-        mergeThresholdMs: Long
-    ): Boolean =
-        sessionStartTimeMs == null ||
-            (lastSessionEndTimeMs != null && nowMs - lastSessionEndTimeMs > mergeThresholdMs)
+    fun needsNewSession(sessionStartTimeMs: Long?): Boolean = sessionStartTimeMs == null
+
+    /**
+     * Duration credited to lifetime stats for a session that ended at
+     * [endedAtMs]: whole seconds of `endedAt − startedAt`, never negative.
+     * Fixed when the session ends (wheel stopped / End Session), so time spent
+     * on the dedication prompt afterwards is never counted as practice.
+     */
+    fun endedSessionDurationSeconds(startedAtMs: Long, endedAtMs: Long): Long =
+        (endedAtMs - startedAtMs).coerceAtLeast(0L) / 1000L
+
+    /** A local calendar day as a half-open `[startMs, endMs)` epoch-millis window. */
+    data class DayWindow(val date: LocalDate, val zone: ZoneId, val startMs: Long, val endMs: Long)
+
+    /**
+     * Bounds of the local calendar day containing [nowMs] in [zone]. Computed
+     * from the current date every time (never by adding 24 h), so DST days
+     * are 23/25 h long and a time-zone change yields the new zone's day.
+     */
+    fun dayWindow(nowMs: Long, zone: ZoneId): DayWindow {
+        val date = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
+        return DayWindow(
+            date = date,
+            zone = zone,
+            startMs = date.atStartOfDay(zone).toInstant().toEpochMilli(),
+            endMs = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        )
+    }
 
     /** Local hour-of-day (0..23) of [epochMillis] in [zone]. */
     fun hourOfDay(epochMillis: Long, zone: ZoneId): Int =

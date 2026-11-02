@@ -1,0 +1,57 @@
+package com.prayerwheel.app.data.stats
+
+import com.prayerwheel.app.data.model.ActiveSessionCheckpoint
+import com.prayerwheel.app.data.model.LifetimeStats
+import com.prayerwheel.app.data.model.Session
+
+/** Fixed "now" for ledger tests (after every session/start time used in them). */
+const val TEST_NOW = 1_800_000_000_000L
+
+/**
+ * In-memory [SessionLedgerStore] mirroring the Room DAO semantics used by
+ * [com.prayerwheel.app.data.db.dao.LedgerDao] (autoincrement ids, ABORT on a
+ * duplicate primary key or session_key, REPLACE for checkpoints).
+ */
+open class FakeLedgerStore : SessionLedgerStore {
+    var stats: LifetimeStats? = null
+    val sessions = linkedMapOf<Long, Session>()
+    val checkpoints = linkedMapOf<String, ActiveSessionCheckpoint>()
+    private var nextId = 1L
+
+    override suspend fun getStats(): LifetimeStats? = stats
+    override suspend fun upsertStats(stats: LifetimeStats) { this.stats = stats }
+    override suspend fun deleteStats() { stats = null }
+
+    override suspend fun getSessionById(id: Long): Session? = sessions[id]
+
+    override suspend fun getSessionByKey(key: String): Session? =
+        sessions.values.firstOrNull { it.sessionKey == key }
+
+    override suspend fun insertSession(session: Session): Long {
+        val id = if (session.id == 0L) nextId else session.id
+        check(id !in sessions) { "UNIQUE constraint failed: sessions.id" }
+        check(session.sessionKey == null || getSessionByKey(session.sessionKey) == null) {
+            "UNIQUE constraint failed: sessions.session_key"
+        }
+        nextId = maxOf(nextId, id + 1)
+        sessions[id] = session.copy(id = id)
+        return id
+    }
+
+    override suspend fun updateSession(session: Session) {
+        if (session.id in sessions) sessions[session.id] = session
+    }
+
+    override suspend fun deleteSessionById(id: Long) { sessions.remove(id) }
+    override suspend fun deleteAllSessions() { sessions.clear() }
+
+    override suspend fun getCheckpoints(): List<ActiveSessionCheckpoint> =
+        checkpoints.values.sortedBy { it.startedAt }
+
+    override suspend fun upsertCheckpoint(checkpoint: ActiveSessionCheckpoint) {
+        checkpoints[checkpoint.sessionKey] = checkpoint
+    }
+
+    override suspend fun deleteCheckpointByKey(key: String) { checkpoints.remove(key) }
+    override suspend fun deleteAllCheckpoints() { checkpoints.clear() }
+}

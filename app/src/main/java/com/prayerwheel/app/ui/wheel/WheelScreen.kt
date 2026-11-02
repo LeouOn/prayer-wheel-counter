@@ -38,6 +38,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -123,6 +126,20 @@ fun WheelScreen(
     val currentIntention by viewModel.currentIntention.collectAsState()
     val sessionGoal by viewModel.sessionGoal.collectAsState()
     val sessionTimeGoalSeconds by viewModel.sessionTimeGoalSeconds.collectAsState()
+
+    // Failed session/stats writes (e.g. disk full): a calm, dismissable notice.
+    val saveError by viewModel.saveError.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(saveError) {
+        saveError?.let { message ->
+            snackbarHostState.showSnackbar(
+                message = message,
+                withDismissAction = true,
+                duration = SnackbarDuration.Long
+            )
+            viewModel.dismissSaveError()
+        }
+    }
     val weightAngle by viewModel.weightAngle.collectAsState()
     val selectedSkin by viewModel.selectedSkin.collectAsState()
     val sendLightActive by viewModel.sendLightActive.collectAsState()
@@ -246,6 +263,7 @@ fun WheelScreen(
         )
 
         Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 TopAppBar(
                     title = {
