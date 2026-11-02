@@ -91,6 +91,39 @@ object SessionRules {
     fun resumeTimerBase(nowMs: Long, priorDurationSeconds: Long): Long =
         nowMs - priorDurationSeconds.coerceAtLeast(0L) * 1000L
 
+    /**
+     * What a live session is priced and attributed with: capacity (mantras per
+     * rotation), mantra and wheel. Fixed for the whole session — captured at
+     * its first rotation, or taken from the saved row when resuming — so the
+     * session's mantras are always `rotations × its own mantrasPerRotation`.
+     */
+    data class SessionPricing(val mantrasPerRotation: Long, val mantraId: String, val wheelId: String?)
+
+    enum class PricingChange {
+        /** Nothing to do (no priced live session, or selection unchanged). */
+        NONE,
+        /** Live session has no rotations yet: drop its pricing; the next rotation captures the new one. */
+        ADOPT,
+        /** Live session has rotations: save it as-is and continue in a new session with the new pricing. */
+        SPLIT
+    }
+
+    /**
+     * Decision when the user selects a different capacity/mantra/wheel while a
+     * session may be live. Never re-prices rotations already counted (that
+     * used to re-value the whole session — e.g. 50 rotations at 100,000 turning
+     * into 50 × 1,000 — and the ledger then debited the difference).
+     */
+    fun pricingChange(liveRotations: Long, live: SessionPricing?, selected: SessionPricing): PricingChange = when {
+        live == null || live == selected -> PricingChange.NONE
+        liveRotations <= 0L -> PricingChange.ADOPT
+        else -> PricingChange.SPLIT
+    }
+
+    /** A session's mantras: rotations × its own capacity (exact). */
+    fun sessionMantras(rotations: Long, mantrasPerRotation: Long): BigInteger =
+        BigInteger.valueOf(rotations).multiply(BigInteger.valueOf(mantrasPerRotation))
+
     /** Local hour-of-day (0..23) of [epochMillis] in [zone]. */
     fun hourOfDay(epochMillis: Long, zone: ZoneId): Int =
         Instant.ofEpochMilli(epochMillis).atZone(zone).hour

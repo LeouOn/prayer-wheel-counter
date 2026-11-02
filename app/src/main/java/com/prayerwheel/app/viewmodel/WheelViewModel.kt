@@ -565,6 +565,21 @@ class WheelViewModel(
      * timer continues from the row's recorded duration (idle gap excluded).
      */
     private var sessionTimerBase: Long? = null
+
+    /**
+     * Capacity/mantra/wheel of the live session, fixed for its lifetime
+     * (captured at the first rotation, or restored from the row on resume).
+     * Changing the selection never re-prices counted rotations; see
+     * [onSelectedPricingChanged].
+     */
+    private var sessionPricing: SessionRules.SessionPricing? = null
+
+    private fun selectedPricing() = SessionRules.SessionPricing(
+        _mantrasPerRotation.value, _currentMantra.value.id, _currentWheelId.value
+    )
+
+    private fun livePricing(): SessionRules.SessionPricing =
+        sessionPricing ?: selectedPricing().also { sessionPricing = it }
     private var currentSessionRotations = 0L
     private var currentSessionMantras = BigInteger.ZERO
     /**
@@ -838,15 +853,15 @@ class WheelViewModel(
             startedAt = startTime,
             updatedAt = now,
             rotationCount = currentSessionRotations,
-            mantrasPerRotation = _mantrasPerRotation.value,
+            mantrasPerRotation = livePricing().mantrasPerRotation,
             totalMantras = currentSessionMantras,
-            mantraId = _currentMantra.value.id,
+            mantraId = livePricing().mantraId,
             mode = _spinMode.value.name,
             averageRpm = if (rpmSampleCount > 0) sessionStartRpmSum / rpmSampleCount else 0f,
             peakRpm = _peakRpm.value,
             intention = _currentIntention.value.ifBlank { null },
             sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null,
-            wheelId = _currentWheelId.value,
+            wheelId = livePricing().wheelId,
             label = pendingSessionLabel,
             durationSeconds = _sessionDurationSeconds.value
         )
@@ -1193,11 +1208,12 @@ class WheelViewModel(
      * Updates the mantras per rotation setting.
      */
     fun setMantrasPerRotation(count: Long) {
+        if (count == _mantrasPerRotation.value) return
+        _mantrasPerRotation.value = count
+        _currentWheelId.value = null // Cleared because user manually modified settings
+        onSelectedPricingChanged()
         viewModelScope.launch {
-            _mantrasPerRotation.value = count
             userPreferences.setMantrasPerRotation(count)
-            _currentWheelId.value = null // Cleared because user manually modified settings
-            updateSessionMantras()
         }
     }
 
@@ -1205,9 +1221,35 @@ class WheelViewModel(
      * Updates the selected mantra.
      */
     fun setSelectedMantra(mantraId: String) {
+        if (mantraId == _currentMantra.value.id) return
+        _currentMantra.value = Mantras.byId(mantraId) ?: Mantras.OM_MANI_PADME_HUM
+        _currentWheelId.value = null // Cleared because user manually modified settings
+        onSelectedPricingChanged()
         viewModelScope.launch {
             userPreferences.setSelectedMantra(mantraId)
-            _currentWheelId.value = null // Cleared because user manually modified settings
+        }
+    }
+
+    /**
+     * The user picked a different capacity/mantra/wheel on the wheel screen.
+     * Rotations already counted keep the live session's own pricing: with
+     * rotations, the live session is saved as-is (no dedication prompt) and
+     * — if the wheel is still turning — practice continues in a new session
+     * priced with the new selection. Selection changes made elsewhere (e.g.
+     * the Settings screen writing preferences directly) never touch the live
+     * session; they apply from the next session.
+     */
+    private fun onSelectedPricingChanged() {
+        val liveRotations = if (sessionStartTime != null) currentSessionRotations else 0L
+        when (SessionRules.pricingChange(liveRotations, sessionPricing, selectedPricing())) {
+            SessionRules.PricingChange.NONE -> Unit
+            SessionRules.PricingChange.ADOPT -> sessionPricing = null
+            SessionRules.PricingChange.SPLIT -> {
+                val stillTurning = abs(_angularVelocity.value) > STOP_THRESHOLD ||
+                    _autoSpinEnabled.value || _autoSpinActive.value
+                recordLiveSessionWithoutPrompt()
+                if (stillTurning) startSessionIfNeeded()
+            }
         }
     }
 
@@ -1388,12 +1430,13 @@ class WheelViewModel(
      * Applies a saved wheel configuration (sets capacity and mantra).
      */
     fun applySavedWheel(wheel: SavedWheel) {
+        _mantrasPerRotation.value = wheel.capacity
+        _currentMantra.value = Mantras.byId(wheel.mantraId) ?: Mantras.OM_MANI_PADME_HUM
+        _currentWheelId.value = wheel.id
+        onSelectedPricingChanged()
         viewModelScope.launch {
-            _mantrasPerRotation.value = wheel.capacity
             userPreferences.setMantrasPerRotation(wheel.capacity)
             userPreferences.setSelectedMantra(wheel.mantraId)
-            _currentMantra.value = Mantras.byId(wheel.mantraId) ?: Mantras.OM_MANI_PADME_HUM
-            _currentWheelId.value = wheel.id
         }
     }
 
@@ -1634,9 +1677,14 @@ class WheelViewModel(
             // accumulated rotations/start time instead of zeroing them.
             sessionStartTime = session.startedAt
             currentSessionRotations = session.rotationCount
-            currentSessionMantras = session.totalMantras
+            // The resumed session keeps its own capacity/mantra/wheel for its whole
+            // life (never the current selection), and the wheel screen switches to
+            // it so further rotations visibly count at that capacity.
+            sessionPricing = SessionRules.SessionPricing(session.mantrasPerRotation, session.mantraId, session.wheelId)
+            currentSessionMantras = SessionRules.sessionMantras(session.rotationCount, session.mantrasPerRotation)
+            showSessionPricingAsSelection(session)
             _rotationCount.value = session.rotationCount
-            _sessionMantras.value = session.totalMantras
+            _sessionMantras.value = currentSessionMantras
             _hasActiveSession.value = true
             _isPaused.value = false
             _peakRpm.value = session.peakRpm
@@ -1662,6 +1710,17 @@ class WheelViewModel(
             startSessionTimer(timerBase, skipGoalIfAlreadyMet = true)
             startCheckpointing()
             checkpointNow()
+        }
+    }
+
+    /** Shows the resumed session's own wheel (capacity/mantra/wheel) as the current selection. */
+    private fun showSessionPricingAsSelection(session: Session) {
+        _mantrasPerRotation.value = session.mantrasPerRotation
+        Mantras.byId(session.mantraId)?.let { _currentMantra.value = it }
+        _currentWheelId.value = session.wheelId
+        viewModelScope.launch {
+            userPreferences.setMantrasPerRotation(session.mantrasPerRotation)
+            userPreferences.setSelectedMantra(session.mantraId)
         }
     }
 
@@ -1727,9 +1786,9 @@ class WheelViewModel(
             startedAt = startTime,
             endedAt = endedAt,
             rotationCount = currentSessionRotations,
-            mantrasPerRotation = _mantrasPerRotation.value,
+            mantrasPerRotation = livePricing().mantrasPerRotation,
             totalMantras = currentSessionMantras,
-            mantraId = _currentMantra.value.id,
+            mantraId = livePricing().mantraId,
             dedication = null,
             mode = _spinMode.value.name,
             averageRpm = avgRpm,
@@ -1737,7 +1796,7 @@ class WheelViewModel(
             totalSpins = currentSessionRotations,
             intention = _currentIntention.value.ifBlank { null },
             sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null,
-            wheelId = _currentWheelId.value,
+            wheelId = livePricing().wheelId,
             label = pendingSessionLabel,
             sessionKey = sessionKey
         )
@@ -1764,6 +1823,7 @@ class WheelViewModel(
         if (SessionRules.needsNewSession(sessionStartTime)) {
             sessionStartTime = now
             sessionTimerBase = now
+            sessionPricing = null // captured from the selection at the first rotation
             sessionKey = java.util.UUID.randomUUID().toString()
             currentSessionRotations = 0L
             currentSessionMantras = BigInteger.ZERO
@@ -1991,6 +2051,7 @@ class WheelViewModel(
 
     private fun onRotationComplete(count: Long) {
         currentSessionRotations += count
+        val pricedAt = livePricing().mantrasPerRotation
 
         viewModelScope.launch {
             // In-memory lifetime mantras only — provides the live display while spinning.
@@ -1998,7 +2059,7 @@ class WheelViewModel(
             // via recordCompletedSession(). Writing it here on every rotation caused every
             // session's mantras to be double-counted: once incrementally per-rotation here,
             // then again at session save, inflating lifetime totals by N×.
-            val mantrasThisRotation = _mantrasPerRotation.value.toBigInteger() * count.toBigInteger()
+            val mantrasThisRotation = SessionRules.sessionMantras(count, pricedAt)
             val previousTotalMantras = _lifetimeMantras.value
             val newTotalMantras = previousTotalMantras + mantrasThisRotation
             _lifetimeMantras.value = newTotalMantras
@@ -2053,7 +2114,7 @@ class WheelViewModel(
     }
 
     private fun updateSessionMantras() {
-        currentSessionMantras = currentSessionRotations.toBigInteger() * _mantrasPerRotation.value.toBigInteger()
+        currentSessionMantras = SessionRules.sessionMantras(currentSessionRotations, livePricing().mantrasPerRotation)
         _sessionMantras.value = currentSessionMantras
     }
 
@@ -2106,6 +2167,7 @@ class WheelViewModel(
     private fun resetSessionState() {
         sessionStartTime = null
         sessionTimerBase = null
+        sessionPricing = null
         currentSessionRotations = 0L
         currentSessionMantras = BigInteger.ZERO
         sessionKey = null

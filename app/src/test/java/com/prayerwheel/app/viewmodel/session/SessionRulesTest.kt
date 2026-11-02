@@ -165,6 +165,34 @@ class SessionRulesTest {
         assertEquals(900L, SessionRules.todayProgress(listOf(s), 19, utc).practiceSeconds)
     }
 
+    // ── session pricing ────────────────────────────────────────────────
+
+    private val stupa = SessionRules.SessionPricing(100_000, "om", "stupa")
+    private val hand = SessionRules.SessionPricing(1_000, "om", "hand")
+
+    @Test
+    fun pricingChange_neverRepricesCountedRotations() {
+        // Resumed 50 rotations at 100,000; user picks the 1,000 wheel: split, don't re-price.
+        assertEquals(SessionRules.PricingChange.SPLIT, SessionRules.pricingChange(50, stupa, hand))
+        // No rotations yet: simply adopt the new selection at the first rotation.
+        assertEquals(SessionRules.PricingChange.ADOPT, SessionRules.pricingChange(0, stupa, hand))
+        // No priced live session, or same selection: nothing to do.
+        assertEquals(SessionRules.PricingChange.NONE, SessionRules.pricingChange(0, null, hand))
+        assertEquals(SessionRules.PricingChange.NONE, SessionRules.pricingChange(50, stupa, stupa))
+        // A wheel change alone (same capacity/mantra) changes attribution: split too.
+        assertEquals(SessionRules.PricingChange.SPLIT, SessionRules.pricingChange(5, stupa, stupa.copy(wheelId = null)))
+    }
+
+    @Test
+    fun sessionMantras_isRotationsTimesOwnCapacity_exact() {
+        // Resumed 50 x 100,000 plus one more rotation stays at the session's own capacity.
+        assertEquals(BigInteger.valueOf(5_100_000), SessionRules.sessionMantras(51, stupa.mantrasPerRotation))
+        assertEquals(
+            BigInteger.valueOf(Long.MAX_VALUE).multiply(BigInteger.valueOf(Long.MAX_VALUE)),
+            SessionRules.sessionMantras(Long.MAX_VALUE, Long.MAX_VALUE)
+        )
+    }
+
     // ── autoLabel / isMorning ──────────────────────────────────────────
 
     @Test
