@@ -8,7 +8,7 @@
 - **Release blocker — fixed on this branch**: Google Play requires `targetSdk 36` for updates since 2026-08-31; the app now targets 36.
 - **Data integrity — fixed on this branch**: a bug that discarded rotations from active sessions on every flick, session loss on process death, non-atomic lifetime writes, a `SUM()` overflow crash, broken Android 12+ backup, and unbounded destructive migration (§4).
 - **Year/day boundaries (Dec 31 → Jan 1) — fixed**: date-picker day/year shift, calendar streak, stale "today" card, alarms after time-zone change, late end-of-day summary.
-- **Maintainability**: god files split, pure logic extracted, 0 → 161 unit tests (§6).
+- **Maintainability**: god files split, pure logic extracted, 0 → 177 unit tests (§6).
 - **Not yet done**: on-device smoke test, the compileSdk 37 dependency wave, and four product decisions (see "Decisions needed").
 
 ## 1. Planned vs. built
@@ -78,7 +78,14 @@ Status as of branch `chore/2027-readiness`. ✅ = fixed on this branch.
 | — | Crash | Dedication screen loaded an empty font resource | ✅ uses `TibetanFont` |
 | — | Low | Ghost "0 mantras" notification after process death; unused `WAKE_LOCK`; exported `EndOfDayReceiver`; breath-mode mic recording in background | ✅ |
 
-Known residual risks: up to 15 s of practice can be lost on a hard kill; ledger transactions are unit-tested against an in-memory fake, not real SQLite (no instrumented tests yet); nothing on this branch has been run on a device.
+An independent review of the ledger work found six further defects in the resume path (stale resume snapshot, resume re-pricing a session at the current wheel's capacity, v4-era resets invisible after migration, deleting the live row, resume time gap, Reset All racing the save worker) — all fixed, plus rotations lost during the first drag of a session.
+
+Behavior changes to know about:
+- A session keeps its own capacity / mantra / wheel. Changing them on the wheel screen mid-session saves the current session and starts a new one; changes from Settings apply from the next session.
+- Resuming a session switches the wheel screen to that session's wheel.
+- Recovered (crash-interrupted) sessions are saved as completed sessions without a dedication; the resume banner still offers to continue them.
+
+Known residual risks: up to 15 s of practice can be lost on a hard kill; a save worker queued by a previous process can re-insert a row the user deleted before it ran; the widget and end-of-day summary compute time as end − start (includes a resume gap); ledger transactions are unit-tested against an in-memory fake (migration also checked against real SQLite), with no instrumented Room tests yet; nothing on this branch has been run on a device.
 
 ## 5. Build & platform
 
@@ -98,7 +105,7 @@ Still open:
 - `WheelScreen.kt` 3524 → 886 lines: one file per view mode in `ui/wheel/views/`, drawing in `ui/wheel/render/`.
 - `WheelViewModel.kt`: pure logic extracted to `viewmodel/physics|milestones|session|haptics` and `data/stats`; session/lifetime writes moved to `LedgerDao` / `SessionLedger`.
 - Calculator, Settings, History, Calendar, UserPreferences split into subpackages; exact-duplicate helpers merged.
-- Tests: 0 → 161 JVM unit tests.
+- Tests: 0 → 177 JVM unit tests.
 
 Deferred: unifying the 6 copy-pasted gesture handlers and divergent glow copies (visual change), merging formatters that only look alike, splitting the single ViewModel, DI, Robolectric/instrumented Room tests.
 
