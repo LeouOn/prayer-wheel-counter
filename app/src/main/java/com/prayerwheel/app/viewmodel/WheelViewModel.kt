@@ -1104,6 +1104,7 @@ class WheelViewModel(
         val totalRotation = _leftRotationAngle.value
         val crossed = SpinPhysics.revolutionsCrossed(totalRotation - angularDiff, totalRotation)
         if (crossed > 0) {
+            ensureSessionForRotation()
             _leftRotationCount.value += crossed
             onDualWheelRotationComplete(crossed)
         }
@@ -1116,6 +1117,7 @@ class WheelViewModel(
         val totalRotation = _rightRotationAngle.value
         val crossed = SpinPhysics.revolutionsCrossed(totalRotation - angularDiff, totalRotation)
         if (crossed > 0) {
+            ensureSessionForRotation()
             _rightRotationCount.value += crossed
             onDualWheelRotationComplete(crossed)
         }
@@ -1126,6 +1128,7 @@ class WheelViewModel(
      * Both wheels contribute to the same session mantras.
      */
     private fun onDualWheelRotationComplete(count: Long) {
+        ensureSessionForRotation()
         currentSessionRotations += count
         updateSessionMantras()
         triggerHapticTick()
@@ -2130,6 +2133,7 @@ class WheelViewModel(
     private var lastWidgetUpdateMs = 0L
 
     private fun onRotationComplete(count: Long) {
+        ensureSessionForRotation()
         currentSessionRotations += count
         val pricedAt = livePricing().mantrasPerRotation
 
@@ -2369,9 +2373,20 @@ class WheelViewModel(
         val totalRotation = _rotationAngle.value
         val crossed = SpinPhysics.revolutionsCrossed(totalRotation - angularDiff, totalRotation)
         if (crossed > 0) {
+            ensureSessionForRotation()
             _rotationCount.value += crossed
             onRotationComplete(crossed)
         }
+    }
+
+    /**
+     * Every counted rotation must belong to a live session. Rotations made
+     * while dragging happen BEFORE onDragEnd() starts the session; they used to
+     * be counted into no session and then zeroed when onDragEnd() initialized
+     * it, so a slowly dragged first turn (or several) was silently lost.
+     */
+    private fun ensureSessionForRotation() {
+        if (sessionStartTime == null) startSessionIfNeeded()
     }
 
     private fun triggerHapticTick() {
