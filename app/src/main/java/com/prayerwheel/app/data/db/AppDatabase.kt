@@ -23,7 +23,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LifetimeStats::class
     ],
     version = 4,
-    exportSchema = false
+    exportSchema = true
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {

@@ -44,6 +44,11 @@ android {
     }
 }
 
+// Room schema export (app/schemas) so every DB version is reviewable/testable.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     // AndroidX Core
     implementation(libs.androidx.core.ktx)
