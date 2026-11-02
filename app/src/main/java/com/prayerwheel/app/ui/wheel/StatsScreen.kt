@@ -25,8 +25,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontStyle
@@ -40,6 +38,7 @@ import com.prayerwheel.app.data.model.MantraStats
 import com.prayerwheel.app.data.model.Mantras
 import com.prayerwheel.app.data.model.Session
 import com.prayerwheel.app.ui.components.NumberFormatter
+import com.prayerwheel.app.ui.components.StatItem
 import java.math.BigInteger
 import java.time.Instant
 import java.time.ZoneId
@@ -482,26 +481,6 @@ private fun MantraStatsCard(
                 )
             }
         }
-    }
-}
-
-/**
- * Individual stat item.
- */
-@Composable
-private fun StatItem(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onPrimaryContainer
-        )
     }
 }
 

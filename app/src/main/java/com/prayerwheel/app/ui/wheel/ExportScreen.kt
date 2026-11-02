@@ -22,6 +22,7 @@ import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.data.model.Mantras
 import com.prayerwheel.app.data.model.Session
 import com.prayerwheel.app.ui.components.NumberFormatter
+import com.prayerwheel.app.ui.components.calculateDuration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -279,19 +280,3 @@ private fun buildJsonContent(sessions: List<Session>): String {
         appendLine("}")
     }
 }
-
-private fun calculateDuration(startedAt: Long, endedAt: Long): String {
-    val durationMs = endedAt - startedAt
-    val seconds = durationMs / 1000
-    val minutes = seconds / 60
-    val hours = minutes / 60
-
-    return when {
-        hours > 0 -> "${hours}h ${minutes % 60}m"
-        minutes > 0 -> "${minutes}m"
-        seconds > 0 -> "${seconds}s"
-        else -> ""
-    }
-}
-
-

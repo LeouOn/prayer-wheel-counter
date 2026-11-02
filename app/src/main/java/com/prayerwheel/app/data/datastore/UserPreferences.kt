@@ -12,59 +12,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.prayerwheel.app.data.model.SavedWheel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import org.json.JSONArray
-import org.json.JSONObject
 import java.util.UUID
-
-/**
- * Theme options for the app.
- */
-enum class AppTheme {
-    LIGHT,
-    DARK,
-    SEPIA,
-    DAWN_DUSK,
-    SYSTEM
-}
-
-/**
- * Spin modes for the prayer wheel.
- */
-enum class SpinMode {
-    MANUAL,        // drag-to-spin (current behavior)
-    TWO_HANDED,    // two simultaneous touches required
-    AUTO_SPIN,     // continuous at configurable RPM
-    TWO_HANDED_AUTO // auto-spin combined with two-handed friction
-}
-
-/**
- * View modes for the prayer wheel display.
- */
-enum class ViewMode {
-    SIDE_VIEW,     // side view with stem, cylinder, caps, crystal
-    TOP_DOWN,      // top-down circular view with mantra around rim
-    ABSTRACT,      // minimalist mandala/sacred geometry representation
-    TABLE_TOP,     // table top view with a wider base
-    GLOBE          // spherical wheel rotating on an axis
-}
-
-/**
- * Number formatting styles for the mantra counter.
- */
-enum class NumberFormatStyle {
-    STANDARD,      // 1.2M, 5B
-    LONG_FORM,     // 1 Million 200 Thousand
-    SCIENTIFIC,    // 1.2 x 10^6
-    EXACT          // 1,200,000
-}
-
-/**
- * Number notation style for displaying large numbers.
- */
-enum class NumberNotation {
-    STANDARD,      // K, M, B, T, Qa, Qi, etc.
-    EXTENDED       // aa, ab, ac, ... az, ba, bb, etc.
-}
 
 /**
  * User preferences stored via DataStore.
@@ -705,40 +653,11 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    private fun parseSavedWheelsJson(jsonString: String): List<SavedWheel> {
-        return try {
-            val jsonArray = JSONArray(jsonString)
-            (0 until jsonArray.length()).map { i ->
-                val obj = jsonArray.getJSONObject(i)
-                SavedWheel(
-                    id = obj.getString("id"),
-                    name = obj.getString("name"),
-                    capacity = obj.getLong("capacity"),
-                    mantraId = obj.getString("mantraId"),
-                    skinId = obj.optString("skinId", "traditional_gold"),
-                    createdAt = obj.optLong("createdAt", System.currentTimeMillis())
-                )
-            }
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
+    private fun parseSavedWheelsJson(jsonString: String): List<SavedWheel> =
+        SavedWheelsJson.parseSavedWheelsJson(jsonString)
 
-    private fun savedWheelsToJson(wheels: List<SavedWheel>): String {
-        val jsonArray = JSONArray()
-        wheels.forEach { wheel ->
-            val obj = JSONObject().apply {
-                put("id", wheel.id)
-                put("name", wheel.name)
-                put("capacity", wheel.capacity)
-                put("mantraId", wheel.mantraId)
-                put("skinId", wheel.skinId)
-                put("createdAt", wheel.createdAt)
-            }
-            jsonArray.put(obj)
-        }
-        return jsonArray.toString()
-    }
+    private fun savedWheelsToJson(wheels: List<SavedWheel>): String =
+        SavedWheelsJson.savedWheelsToJson(wheels)
 
     suspend fun clearAllData() {
         dataStore.edit { preferences ->
