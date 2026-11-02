@@ -105,6 +105,16 @@ class SessionRulesTest {
         assertFalse(SessionRules.needsNewSession(activeStart))
     }
 
+    // ── endedSessionDurationSeconds ─────────────────────────────────────
+
+    @Test
+    fun endedSessionDuration_isFixedAtSessionEnd_truncatedAndNonNegative() {
+        val start = now - 600_000L
+        assertEquals(600L, SessionRules.endedSessionDurationSeconds(start, now))
+        assertEquals(0L, SessionRules.endedSessionDurationSeconds(start, start + 999))
+        assertEquals(0L, SessionRules.endedSessionDurationSeconds(start, start - 5_000))
+    }
+
     // ── autoLabel / isMorning ──────────────────────────────────────────
 
     @Test

@@ -55,6 +55,15 @@ object SessionRules {
      */
     fun needsNewSession(sessionStartTimeMs: Long?): Boolean = sessionStartTimeMs == null
 
+    /**
+     * Duration credited to lifetime stats for a session that ended at
+     * [endedAtMs]: whole seconds of `endedAt − startedAt`, never negative.
+     * Fixed when the session ends (wheel stopped / End Session), so time spent
+     * on the dedication prompt afterwards is never counted as practice.
+     */
+    fun endedSessionDurationSeconds(startedAtMs: Long, endedAtMs: Long): Long =
+        (endedAtMs - startedAtMs).coerceAtLeast(0L) / 1000L
+
     /** Local hour-of-day (0..23) of [epochMillis] in [zone]. */
     fun hourOfDay(epochMillis: Long, zone: ZoneId): Int =
         Instant.ofEpochMilli(epochMillis).atZone(zone).hour

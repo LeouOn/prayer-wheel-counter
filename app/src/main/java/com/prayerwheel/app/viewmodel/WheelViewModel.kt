@@ -586,7 +586,7 @@ class WheelViewModel(
 
     // T15: cached Flow values so the non-suspending session-start path can read them
     // (cached from preference flows). pendingSessionLabel is consumed by
-    // createSessionFromPending / createSessionFromCurrentState.
+    // createSessionFromCurrentState and the checkpoint.
     private var pendingSessionLabel: String? = null
     private var autoLabelSessionsEnabled: Boolean = true
     private var cachedReminderEveningHour: Int = 19
@@ -594,19 +594,18 @@ class WheelViewModel(
     // Notification service active flag
     private var notificationActive = false
 
+    /**
+     * A session that has ended and is awaiting the dedication prompt. The
+     * [session] (endedAt) and [durationSeconds] are snapshotted at the moment
+     * the session ended, and it is already being recorded by [recordJob] — the
+     * prompt only adds the dedication afterwards, so leaving it open (even
+     * overnight, or until the process dies) neither inflates the recorded
+     * time nor risks losing the session.
+     */
     private data class PendingSession(
-        val sessionKey: String?,
-        val startTime: Long,
-        val rotations: Long,
-        val mantras: BigInteger,
-        val mantrasPerRotation: Long,
-        val mantraId: String,
-        val mode: SpinMode,
-        val averageRpm: Float,
-        val peakRpm: Float,
-        val intention: String?,
-        val sessionGoal: Long?,
-        val wheelId: String?
+        val session: Session,
+        val durationSeconds: Long,
+        val recordJob: Job
     )
 
     init {
@@ -1505,9 +1504,12 @@ class WheelViewModel(
      * the screen mid-reset cannot leave a half-reset database.
      */
     fun resetAllData() {
+        val pendingRecord = pendingDedicationSession?.recordJob
         discardLiveSession()
         SessionSaveWorker.cancel(appContext)
         appScope.launch {
+            // An ended session still being recorded must not land after the wipe.
+            pendingRecord?.join()
             try {
                 checkpointMutex.withLock { ledgerDao.resetAll() }
                 userPreferences.clearAllData()
@@ -1619,7 +1621,7 @@ class WheelViewModel(
      * Does NOT restore transient physics state (angularVelocity, drag history).
      */
     fun resumeFromSession(session: Session) {
-        if (sessionStartTime != null && currentSessionRotations > 0L && pendingDedicationSession == null) {
+        if (sessionStartTime != null && currentSessionRotations > 0L) {
             recordLiveSessionWithoutPrompt()
         }
         viewModelScope.launch {
@@ -1678,83 +1680,50 @@ class WheelViewModel(
     }
 
     /**
-     * Confirms dedication and saves the session.
+     * Applies the dedication to the already-recorded session and dismisses
+     * the prompt. The session itself was recorded when it ended.
      */
     fun confirmDedication(dedication: String?) {
+        val pending = pendingDedicationSession
+        dismissDedicationPrompt()
         viewModelScope.launch {
-            pendingDedicationSession?.let { pending ->
-                // Save custom dedication if provided
-                if (dedication != null && dedication.isNotBlank()) {
-                    userPreferences.setCustomDedication(dedication)
-                }
-
-                // Save the session to Room
-                val endedAt = System.currentTimeMillis()
-                val session = createSessionFromPending(pending, endedAt, dedication)
-                val durationSeconds = _sessionDurationSeconds.value
-                sessionKey = null // handed off: no further checkpoints for it
-                stopCheckpointing()
-
-                recordCompletedSession(session, durationSeconds)
+            // Save custom dedication if provided
+            if (dedication != null && dedication.isNotBlank()) {
+                userPreferences.setCustomDedication(dedication)
             }
-
-            pendingDedicationSession = null
-            _showDedicationPrompt.value = false
-            resetSessionState()
+            val key = pending?.session?.sessionKey
+            if (dedication != null && key != null) {
+                pending.recordJob.join()
+                durableWrite("dedication") { sessionDao.updateDedicationByKey(key, dedication) }
+            }
         }
     }
 
     /**
-     * Skips the dedication prompt.
+     * Skips the dedication prompt. The session was already recorded (with no
+     * dedication) when it ended.
      */
     fun skipDedication() {
-        viewModelScope.launch {
-            pendingDedicationSession?.let { pending ->
-                val session = createSessionFromPending(pending, System.currentTimeMillis(), null)
-                val durationSeconds = _sessionDurationSeconds.value
-                sessionKey = null // handed off: no further checkpoints for it
-                stopCheckpointing()
-                recordCompletedSession(session, durationSeconds)
-            }
-            pendingDedicationSession = null
-            _showDedicationPrompt.value = false
-            resetSessionState()
-        }
+        dismissDedicationPrompt()
+    }
+
+    private fun dismissDedicationPrompt() {
+        pendingDedicationSession = null
+        _showDedicationPrompt.value = false
+        // Clear the ended session's display — unless a new session has already
+        // started while the prompt was open (spinning again), which must be kept.
+        if (sessionStartTime == null) resetSessionState()
     }
 
     /**
-     * Creates a Session from pending session data.
+     * Creates a Session from the current live state, ending at [endedAt]
+     * (session end, onCleared, or when superseded by a resume).
      */
-    private fun createSessionFromPending(pending: PendingSession, endedAt: Long, dedication: String?): Session {
-        return Session(
-            startedAt = pending.startTime,
-            endedAt = endedAt,
-            rotationCount = pending.rotations,
-            mantrasPerRotation = pending.mantrasPerRotation,
-            totalMantras = pending.mantras,
-            mantraId = pending.mantraId,
-            dedication = dedication,
-            mode = pending.mode.name,
-            averageRpm = pending.averageRpm,
-            peakRpm = pending.peakRpm,
-            totalSpins = pending.rotations,
-            intention = pending.intention,
-            sessionGoal = pending.sessionGoal,
-            wheelId = pending.wheelId,
-            label = pendingSessionLabel,
-            sessionKey = pending.sessionKey
-        )
-    }
-
-    /**
-     * Creates a Session from the current state (for onCleared).
-     */
-    private fun createSessionFromCurrentState(): Session? {
+    private fun createSessionFromCurrentState(endedAt: Long = System.currentTimeMillis()): Session? {
         val startTime = sessionStartTime ?: return null
         if (currentSessionRotations == 0L) return null
 
         val avgRpm = if (rpmSampleCount > 0) sessionStartRpmSum / rpmSampleCount else 0f
-        val endedAt = System.currentTimeMillis()
 
         return Session(
             startedAt = startTime,
@@ -1805,6 +1774,10 @@ class WheelViewModel(
             _averageRpm.value = 0f
             _sessionDurationSeconds.value = 0L
             _isPaused.value = false
+            // The previous session's counters may still be displayed (dedication
+            // prompt still open); this is a new session.
+            _rotationCount.value = 0L
+            _sessionMantras.value = BigInteger.ZERO
             rpmSamples.clear()
             rpmSampleCount = 0
             sessionStartRpmSum = 0f
@@ -2005,11 +1978,14 @@ class WheelViewModel(
     }
 
     private fun scheduleSessionSave() {
+        // The session's end is when the wheel stopped, not when the 30 s grace
+        // period below expired.
+        val stoppedAt = System.currentTimeMillis()
         sessionStopJob?.cancel()
         sessionStopJob = viewModelScope.launch {
             delay(SESSION_STOP_DELAY_MS)
             if (abs(_angularVelocity.value) < STOP_THRESHOLD) {
-                saveSessionWithDedication()
+                saveSessionWithDedication(endedAt = stoppedAt)
             }
         }
     }
@@ -2084,31 +2060,43 @@ class WheelViewModel(
         _sessionMantras.value = currentSessionMantras
     }
 
-    private fun saveSessionWithDedication() {
+    /**
+     * Ends the live session at [endedAt]: snapshots it (end time and duration),
+     * stops the session timer, notification and checkpointing, records it
+     * right away, and shows the dedication prompt.
+     *
+     * The duration is `endedAt − startedAt`, fixed now — previously the
+     * prompt's confirm time was used as endedAt and the still-running live
+     * timer as the lifetime duration, so a prompt left open overnight
+     * recorded ~8 h of practice. The displayed counters are kept for the
+     * prompt; `sessionStartTime` is cleared so a spin while the prompt is
+     * open starts a new session instead of being silently dropped.
+     */
+    private fun saveSessionWithDedication(endedAt: Long = System.currentTimeMillis()) {
         val startTime = sessionStartTime ?: return
         if (currentSessionRotations == 0L) {
             resetSessionState()
             return
         }
+        val end = endedAt.coerceAtLeast(startTime)
+        val session = createSessionFromCurrentState(end) ?: return
+        val durationSeconds = SessionRules.endedSessionDurationSeconds(startTime, end)
 
-        // Calculate average RPM from samples
-        val avgRpm = if (rpmSampleCount > 0) sessionStartRpmSum / rpmSampleCount else 0f
+        // Hand the session off: no further timer ticks, checkpoints or
+        // notifications for it, and no onCleared/worker save (it's recorded below).
+        sessionKey = null
+        sessionStartTime = null
+        sessionTimerJob?.cancel()
+        sessionTimerJob = null
+        stopCheckpointing()
+        stopNotificationService()
+        sessionStopJob?.cancel()
+        sessionStopJob = null
+        _sessionDuration.value = end - startTime
+        _sessionDurationSeconds.value = durationSeconds
 
-        // Store pending session data for dedication prompt
-        pendingDedicationSession = PendingSession(
-            sessionKey = sessionKey,
-            startTime = startTime,
-            rotations = currentSessionRotations,
-            mantras = currentSessionMantras,
-            mantrasPerRotation = _mantrasPerRotation.value,
-            mantraId = _currentMantra.value.id,
-            mode = _spinMode.value,
-            averageRpm = avgRpm,
-            peakRpm = _peakRpm.value,
-            intention = _currentIntention.value.ifBlank { null },
-            sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null,
-            wheelId = _currentWheelId.value
-        )
+        val recordJob = viewModelScope.launch { recordCompletedSession(session, durationSeconds) }
+        pendingDedicationSession = PendingSession(session, durationSeconds, recordJob)
 
         _hasActiveSession.value = false
         _showDedicationPrompt.value = true

@@ -29,6 +29,10 @@ interface SessionDao {
     @Query("UPDATE sessions SET label = :label WHERE id = :id")
     suspend fun updateLabel(id: Long, label: String?)
 
+    /** Adds the dedication chosen after a session ended (the session is recorded at its end). */
+    @Query("UPDATE sessions SET dedication = :dedication WHERE session_key = :sessionKey")
+    suspend fun updateDedicationByKey(sessionKey: String, dedication: String)
+
     @Query("SELECT * FROM sessions ORDER BY startedAt DESC")
     fun getAllSessions(): Flow<List<Session>>
 
