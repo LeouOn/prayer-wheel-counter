@@ -46,5 +46,12 @@ data class Session(
      * lifetime reset are not debited on delete. Null for pre-v5 rows, which
      * necessarily predate any reset recorded by v5+.
      */
-    @ColumnInfo(name = "recorded_at") val recordedAt: Long? = null
+    @ColumnInfo(name = "recorded_at") val recordedAt: Long? = null,
+    /**
+     * Practice duration (seconds) credited to lifetime_stats for this row, set
+     * by the ledger. Debits use exactly this, and a resumed session continues
+     * its timer from it (not from `startedAt`, which would add the idle gap).
+     * Null for pre-v5 rows (then `endedAt − startedAt` is used).
+     */
+    @ColumnInfo(name = "duration_seconds") val durationSeconds: Long? = null
 )

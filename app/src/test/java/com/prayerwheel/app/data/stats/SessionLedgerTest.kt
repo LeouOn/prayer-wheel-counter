@@ -95,8 +95,10 @@ class SessionLedgerTest {
         assertEquals(1, store.sessions.size)
         assertEquals(BigInteger.ZERO, store.stats!!.totalMantras)
         assertEquals(0L, store.stats!!.sessionsCompleted)
-        SessionLedger.resetAll(store)
+        SessionLedger.resetAll(store, TEST_NOW)
         assertTrue(store.sessions.isEmpty())
-        assertNull(store.stats)
+        assertEquals(BigInteger.ZERO, store.stats!!.totalMantras)
+        assertEquals(0L, store.stats!!.sessionsCompleted)
+        assertEquals(TEST_NOW, store.stats!!.wipedAt)
     }
 }

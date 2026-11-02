@@ -60,6 +60,7 @@ class MigrationsSchemaTest {
     )
     private val createTable = Regex("""CREATE TABLE IF NOT EXISTS `(\w+)`.*""")
     private val createIndex = Regex("""CREATE (UNIQUE )?INDEX IF NOT EXISTS .*""")
+    private val dataStatement = Regex("""(?:UPDATE|INSERT INTO) `(\w+)`.*""", RegexOption.DOT_MATCHES_ALL)
 
     private fun applyMigration(from: Schema, to: Schema, statements: List<String>) {
         for (sql in statements) {
@@ -76,6 +77,9 @@ class MigrationsSchemaTest {
             } ?: createIndex.matchEntire(sql)?.let {
                 assertTrue("Index not in exported schema: $sql", sql in to.indices)
                 from.indices += sql
+            } ?: dataStatement.matchEntire(sql)?.let { m ->
+                // Data-only: must target an existing table and not change the schema.
+                assertTrue("Data statement on unknown table: $sql", m.groupValues[1] in from.tables)
             } ?: fail("Unrecognized migration statement: $sql")
         }
     }

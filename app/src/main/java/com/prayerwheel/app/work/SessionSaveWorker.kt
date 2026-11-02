@@ -10,6 +10,8 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.prayerwheel.app.PrayerWheelApp
 import com.prayerwheel.app.data.model.Session
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import java.math.BigInteger
 
 /**
@@ -126,6 +128,21 @@ class SessionSaveWorker(
         const val KEY_WHEEL_ID = "wheel_id"
         const val KEY_LABEL = "label"
         const val KEY_SESSION_DURATION_SECONDS = "session_duration_seconds"
+
+        /**
+         * Waits (up to [timeoutMs]) until no save for [sessionKey] is queued or
+         * running. Used before resuming that session, so a snapshot from a
+         * previous process lands in the row before the row is read; otherwise
+         * the resumed live counts and the late worker snapshot would diverge
+         * and the smaller increment would be lost. True if none is pending.
+         */
+        suspend fun awaitPending(context: Context, sessionKey: String, timeoutMs: Long): Boolean =
+            withTimeoutOrNull(timeoutMs) {
+                WorkManager.getInstance(context)
+                    .getWorkInfosForUniqueWorkFlow(UNIQUE_WORK_PREFIX + sessionKey)
+                    .first { infos -> infos.all { it.state.isFinished } }
+                true
+            } ?: false
 
         /** Cancels a queued (not yet run) session save, e.g. before "Reset All Data". */
         fun cancel(context: Context) {

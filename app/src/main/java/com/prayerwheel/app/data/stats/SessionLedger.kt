@@ -79,6 +79,12 @@ object SessionLedger {
         nowMs: Long
     ): Recorded {
         val key = session.sessionKey
+        if (key != null && isStaleAfterWipe(session, store.getStats())) {
+            // A snapshot of a session discarded by "Reset All Data" (e.g. a worker
+            // that was already running when the wipe happened): drop it.
+            store.deleteCheckpointByKey(key)
+            return Recorded(session, store.getStats() ?: EMPTY_STATS, changed = false)
+        }
         val existing = key?.let { store.getSessionByKey(it) }
         val result = when {
             existing == null -> insertAndCredit(store, session, durationSeconds, nowMs)
@@ -100,6 +106,17 @@ object SessionLedger {
                 (incoming.endedAt ?: incoming.startedAt) > (existing.endedAt ?: existing.startedAt))
 
     /**
+     * Whether [session] is a live-session snapshot (it has a session key) that
+     * started before the last "Reset All Data" and therefore must not be
+     * recorded. Manual logs have no key and are never affected (they may be
+     * backdated legitimately).
+     */
+    fun isStaleAfterWipe(session: Session, stats: LifetimeStats?): Boolean {
+        val wipedAt = stats?.wipedAt ?: return false
+        return session.sessionKey != null && session.startedAt < wipedAt
+    }
+
+    /**
      * Whether [session] is currently included in the lifetime totals: always,
      * unless the totals were reset after the session was credited. Rows from
      * before v5 (no `recordedAt`) predate any reset that v5+ recorded.
@@ -116,7 +133,7 @@ object SessionLedger {
         durationSeconds: Long,
         nowMs: Long
     ): Recorded {
-        val row = session.copy(id = 0, recordedAt = nowMs)
+        val row = session.copy(id = 0, recordedAt = nowMs, durationSeconds = durationSeconds)
         val id = store.insertSession(row)
         val stats = LifetimeStatsMath.plusSession(store.getStats(), row, durationSeconds)
         store.upsertStats(stats)
@@ -149,7 +166,8 @@ object SessionLedger {
             sessionKey = old.sessionKey ?: replacement.sessionKey,
             dedication = replacement.dedication ?: old.dedication,
             label = replacement.label ?: old.label,
-            recordedAt = if (oldCounts) old.recordedAt ?: nowMs else nowMs
+            recordedAt = if (oldCounts) old.recordedAt ?: nowMs else nowMs,
+            durationSeconds = durationSeconds
         )
         store.updateSession(updated)
         store.upsertStats(stats)
@@ -228,6 +246,25 @@ object SessionLedger {
     }
 
     /**
+     * Prepares row [id] for resuming and returns its CURRENT state (never a
+     * caller-held copy, which may be stale): assigns a session key if the row
+     * predates keys, then folds in a newer checkpoint for that key if one
+     * exists (recording it in place), and re-reads the row. Null if the row
+     * no longer exists.
+     */
+    suspend fun prepareResume(store: SessionLedgerStore, id: Long, newKey: String, nowMs: Long): Session? {
+        val key = ensureSessionKey(store, id, newKey) ?: return null
+        store.getCheckpoints().firstOrNull { it.sessionKey == key }?.let { checkpoint ->
+            if (checkpoint.rotationCount > 0L) {
+                recordSession(store, checkpoint.toSession(), checkpoint.durationSeconds, nowMs)
+            } else {
+                store.deleteCheckpointByKey(key)
+            }
+        }
+        return store.getSessionById(id)
+    }
+
+    /**
      * Records every leftover `active_session` checkpoint (the app died while a
      * session was live) as a completed session with no dedication, crediting
      * the live-timer duration it carried, and clears them. Upserting by key
@@ -251,15 +288,20 @@ object SessionLedger {
      * debited/credited by delete/undo.
      */
     suspend fun resetLifetime(store: SessionLedgerStore, nowMs: Long): LifetimeStats {
-        val zero = EMPTY_STATS.copy(resetAt = nowMs)
+        val zero = EMPTY_STATS.copy(resetAt = nowMs, wipedAt = store.getStats()?.wipedAt)
         store.upsertStats(zero)
         return zero
     }
 
-    /** Deletes every session, the lifetime row and any live-session checkpoint. */
-    suspend fun resetAll(store: SessionLedgerStore) {
+    /**
+     * Deletes every session and live-session checkpoint and zeroes the
+     * lifetime row, stamping [LifetimeStats.wipedAt] so a session snapshot
+     * from before the wipe that arrives later (in-flight SessionSaveWorker)
+     * is dropped instead of resurrected.
+     */
+    suspend fun resetAll(store: SessionLedgerStore, nowMs: Long) {
         store.deleteAllSessions()
-        store.deleteStats()
         store.deleteAllCheckpoints()
+        store.upsertStats(EMPTY_STATS.copy(resetAt = nowMs, wipedAt = nowMs))
     }
 }

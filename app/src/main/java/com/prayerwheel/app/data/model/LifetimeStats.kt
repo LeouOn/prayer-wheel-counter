@@ -27,5 +27,12 @@ data class LifetimeStats(
      * reset since v5. Sessions credited before it no longer count toward these
      * totals, so deleting/restoring them must not debit/credit.
      */
-    @ColumnInfo(name = "reset_at") val resetAt: Long? = null
+    @ColumnInfo(name = "reset_at") val resetAt: Long? = null,
+    /**
+     * Time of the last "Reset All Data". Live-session snapshots (keyed
+     * sessions) that started before it are stale — e.g. a SessionSaveWorker
+     * run already in flight when the wipe happened — and are dropped inside
+     * the recording transaction instead of resurrecting a wiped session.
+     */
+    @ColumnInfo(name = "wiped_at") val wipedAt: Long? = null
 )

@@ -186,8 +186,10 @@ fun WheelScreen(
     var showCustomizer by remember { mutableStateOf(false) }
     var showSavedWheelsManager by remember { mutableStateOf(false) }
 
-    // T17: resume-after-kill — populated once on launch by detectResumableSession().
-    var resumableSession by remember { mutableStateOf<Session?>(null) }
+    // T17: resume-after-kill offer. One-shot VM state (computed once per launch,
+    // cleared when a session starts), so returning to this screen can't re-offer
+    // a stale snapshot of a session that is already live or has moved on.
+    val resumableSession by viewModel.resumableSession.collectAsState()
 
     // Milestone glow animation state
     var milestoneGlowAlpha by remember { mutableStateOf(0f) }
@@ -573,11 +575,6 @@ else {
                     }
                 }
 
-                // T17: probe for an interrupted session once on launch
-                LaunchedEffect(Unit) {
-                    resumableSession = viewModel.detectResumableSession()
-                }
-
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Saved wheels quick select cards (shown if there are saved wheels)
@@ -626,14 +623,11 @@ else {
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.End
                             ) {
-                                TextButton(onClick = { resumableSession = null }) {
+                                TextButton(onClick = { viewModel.dismissResumeOffer() }) {
                                     Text("Discard")
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Button(onClick = {
-                                    viewModel.resumeFromSession(session)
-                                    resumableSession = null
-                                }) {
+                                Button(onClick = { viewModel.resumeFromSession(session) }) {
                                     Text("Resume")
                                 }
                             }

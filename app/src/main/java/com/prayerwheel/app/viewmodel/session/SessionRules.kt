@@ -83,6 +83,64 @@ object SessionRules {
         )
     }
 
+    /**
+     * Base instant for a resumed session's timer: the timer shows
+     * `now − base`, so it continues from the [priorDurationSeconds] already
+     * practiced instead of counting the idle gap since the original start.
+     */
+    fun resumeTimerBase(nowMs: Long, priorDurationSeconds: Long): Long =
+        nowMs - priorDurationSeconds.coerceAtLeast(0L) * 1000L
+
+    /**
+     * What a live session is priced and attributed with: capacity (mantras per
+     * rotation), mantra and wheel. Fixed for the whole session — captured at
+     * its first rotation, or taken from the saved row when resuming — so the
+     * session's mantras are always `rotations × its own mantrasPerRotation`.
+     */
+    data class SessionPricing(val mantrasPerRotation: Long, val mantraId: String, val wheelId: String?)
+
+    enum class PricingChange {
+        /** Nothing to do (no priced live session, or selection unchanged). */
+        NONE,
+        /** Live session has no rotations yet: drop its pricing; the next rotation captures the new one. */
+        ADOPT,
+        /** Live session has rotations: save it as-is and continue in a new session with the new pricing. */
+        SPLIT
+    }
+
+    /**
+     * Decision when the user selects a different capacity/mantra/wheel while a
+     * session may be live. Never re-prices rotations already counted (that
+     * used to re-value the whole session — e.g. 50 rotations at 100,000 turning
+     * into 50 × 1,000 — and the ledger then debited the difference).
+     */
+    fun pricingChange(liveRotations: Long, live: SessionPricing?, selected: SessionPricing): PricingChange = when {
+        live == null || live == selected -> PricingChange.NONE
+        liveRotations <= 0L -> PricingChange.ADOPT
+        else -> PricingChange.SPLIT
+    }
+
+    /** A session's mantras: rotations × its own capacity (exact). */
+    fun sessionMantras(rotations: Long, mantrasPerRotation: Long): BigInteger =
+        BigInteger.valueOf(rotations).multiply(BigInteger.valueOf(mantrasPerRotation))
+
+    /**
+     * Whether offering/performing a resume of a saved session with
+     * [offeredKey] makes sense: never while a session is live or awaiting its
+     * dedication, and never for the session that is already live.
+     */
+    fun canOfferResume(offeredKey: String?, liveKey: String?, hasLiveSession: Boolean): Boolean =
+        !hasLiveSession && (offeredKey == null || offeredKey != liveKey)
+
+    /**
+     * Whether deleting the saved row with [rowKey] deletes the session that is
+     * live right now (it was resumed). The live session must then be discarded
+     * too; otherwise its next save re-inserts the row and re-credits the
+     * counts the delete just debited.
+     */
+    fun isDeletingLiveSession(rowKey: String?, liveKey: String?): Boolean =
+        rowKey != null && rowKey == liveKey
+
     /** Local hour-of-day (0..23) of [epochMillis] in [zone]. */
     fun hourOfDay(epochMillis: Long, zone: ZoneId): Int =
         Instant.ofEpochMilli(epochMillis).atZone(zone).hour
@@ -111,7 +169,8 @@ object SessionRules {
 
     /**
      * Reduces today's sessions into Today's Progress. A session is attributed to
-     * morning/evening by its *start* hour. Practice time sums `endedAt − startedAt`
+     * morning/evening by its *start* hour. Practice time sums the recorded
+     * `durationSeconds` when present (v5+; excludes a resume's idle gap), else `endedAt − startedAt`
      * (open sessions contribute 0; negative spans are ignored) and is truncated
      * to whole seconds once, after summing milliseconds.
      */
@@ -123,9 +182,14 @@ object SessionRules {
         for (session in sessions) {
             if (isMorning(session.startedAt, eveningHour, zone)) morning = true else evening = true
             mantras = mantras.add(session.totalMantras)
-            val endMs = session.endedAt ?: session.startedAt
-            if (endMs >= session.startedAt) {
-                practiceMs += (endMs - session.startedAt)
+            val recorded = session.durationSeconds
+            if (recorded != null) {
+                practiceMs += recorded.coerceAtLeast(0L) * 1000L
+            } else {
+                val endMs = session.endedAt ?: session.startedAt
+                if (endMs >= session.startedAt) {
+                    practiceMs += (endMs - session.startedAt)
+                }
             }
         }
         return TodayProgress(morning, evening, mantras, practiceMs / 1000L)
