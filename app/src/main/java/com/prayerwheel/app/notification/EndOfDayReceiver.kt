@@ -1,12 +1,16 @@
 package com.prayerwheel.app.notification
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.prayerwheel.app.PrayerWheelApp
 import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.data.model.Session
@@ -186,6 +190,12 @@ class EndOfDayReceiver : BroadcastReceiver() {
             .setContentIntent(contentPending)
             .build()
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         runCatching {
             NotificationManagerCompat.from(context)
                 .notify(NOTIFICATION_ID, notification)

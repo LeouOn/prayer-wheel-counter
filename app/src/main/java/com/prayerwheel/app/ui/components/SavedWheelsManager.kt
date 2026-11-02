@@ -58,6 +58,8 @@ fun SavedWheelsManager(
     modifier: Modifier = Modifier
 ) {
     val savedWheels by viewModel.savedWheels.collectAsState()
+    val currentCapacity by viewModel.mantrasPerRotation.collectAsState()
+    val currentMantra by viewModel.currentMantra.collectAsState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     
     var showAddDialog by remember { mutableStateOf(false) }
@@ -147,8 +149,8 @@ fun SavedWheelsManager(
         AddEditWheelDialog(
             title = "Add Wheel",
             initialName = "",
-            initialCapacity = viewModel.mantrasPerRotation.value,
-            initialMantraId = viewModel.currentMantra.value.id,
+            initialCapacity = currentCapacity,
+            initialMantraId = currentMantra.id,
             onSave = { name, capacity, mantraId ->
                 viewModel.addSavedWheel(name, capacity, mantraId)
                 showAddDialog = false
