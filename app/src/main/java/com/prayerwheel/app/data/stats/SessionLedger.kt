@@ -133,7 +133,7 @@ object SessionLedger {
         durationSeconds: Long,
         nowMs: Long
     ): Recorded {
-        val row = session.copy(id = 0, recordedAt = nowMs)
+        val row = session.copy(id = 0, recordedAt = nowMs, durationSeconds = durationSeconds)
         val id = store.insertSession(row)
         val stats = LifetimeStatsMath.plusSession(store.getStats(), row, durationSeconds)
         store.upsertStats(stats)
@@ -166,7 +166,8 @@ object SessionLedger {
             sessionKey = old.sessionKey ?: replacement.sessionKey,
             dedication = replacement.dedication ?: old.dedication,
             label = replacement.label ?: old.label,
-            recordedAt = if (oldCounts) old.recordedAt ?: nowMs else nowMs
+            recordedAt = if (oldCounts) old.recordedAt ?: nowMs else nowMs,
+            durationSeconds = durationSeconds
         )
         store.updateSession(updated)
         store.upsertStats(stats)

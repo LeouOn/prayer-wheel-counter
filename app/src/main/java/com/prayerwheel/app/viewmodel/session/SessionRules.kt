@@ -83,6 +83,14 @@ object SessionRules {
         )
     }
 
+    /**
+     * Base instant for a resumed session's timer: the timer shows
+     * `now − base`, so it continues from the [priorDurationSeconds] already
+     * practiced instead of counting the idle gap since the original start.
+     */
+    fun resumeTimerBase(nowMs: Long, priorDurationSeconds: Long): Long =
+        nowMs - priorDurationSeconds.coerceAtLeast(0L) * 1000L
+
     /** Local hour-of-day (0..23) of [epochMillis] in [zone]. */
     fun hourOfDay(epochMillis: Long, zone: ZoneId): Int =
         Instant.ofEpochMilli(epochMillis).atZone(zone).hour
@@ -111,7 +119,8 @@ object SessionRules {
 
     /**
      * Reduces today's sessions into Today's Progress. A session is attributed to
-     * morning/evening by its *start* hour. Practice time sums `endedAt − startedAt`
+     * morning/evening by its *start* hour. Practice time sums the recorded
+     * `durationSeconds` when present (v5+; excludes a resume's idle gap), else `endedAt − startedAt`
      * (open sessions contribute 0; negative spans are ignored) and is truncated
      * to whole seconds once, after summing milliseconds.
      */
@@ -123,9 +132,14 @@ object SessionRules {
         for (session in sessions) {
             if (isMorning(session.startedAt, eveningHour, zone)) morning = true else evening = true
             mantras = mantras.add(session.totalMantras)
-            val endMs = session.endedAt ?: session.startedAt
-            if (endMs >= session.startedAt) {
-                practiceMs += (endMs - session.startedAt)
+            val recorded = session.durationSeconds
+            if (recorded != null) {
+                practiceMs += recorded.coerceAtLeast(0L) * 1000L
+            } else {
+                val endMs = session.endedAt ?: session.startedAt
+                if (endMs >= session.startedAt) {
+                    practiceMs += (endMs - session.startedAt)
+                }
             }
         }
         return TodayProgress(morning, evening, mantras, practiceMs / 1000L)

@@ -152,6 +152,19 @@ class SessionRulesTest {
         assertEquals(java.time.LocalDate.of(2026, 3, 11), SessionRules.dayWindow(instant, ZoneId.of("Asia/Tokyo")).date)
     }
 
+    @Test
+    fun resumeTimerBase_continuesFromRecordedDuration() {
+        assertEquals(now - 600_000L, SessionRules.resumeTimerBase(now, 600))
+        assertEquals(now, SessionRules.resumeTimerBase(now, -5))
+    }
+
+    @Test
+    fun todayProgress_prefersRecordedDuration() {
+        // Resumed session: started 08:00, recorded 15 min of practice, ended 10:15.
+        val s = session(startedAt = utcMillis(8), endedAt = utcMillis(10, 15)).copy(durationSeconds = 900)
+        assertEquals(900L, SessionRules.todayProgress(listOf(s), 19, utc).practiceSeconds)
+    }
+
     // ── autoLabel / isMorning ──────────────────────────────────────────
 
     @Test

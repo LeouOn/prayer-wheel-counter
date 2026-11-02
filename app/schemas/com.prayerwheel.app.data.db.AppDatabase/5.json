@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 5,
-    "identityHash": "8d07b4f470f8e5bc58f604cdf0a39d83",
+    "identityHash": "a3899831d6046cda1c1c69e4af66f054",
     "entities": [
       {
         "tableName": "sessions",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startedAt` INTEGER NOT NULL, `endedAt` INTEGER, `rotationCount` INTEGER NOT NULL, `mantrasPerRotation` INTEGER NOT NULL, `totalMantras` TEXT NOT NULL, `mantraId` TEXT NOT NULL, `dedication` TEXT, `mode` TEXT NOT NULL, `average_rpm` REAL NOT NULL, `peak_rpm` REAL NOT NULL, `total_spins` INTEGER NOT NULL, `intention` TEXT, `session_goal` INTEGER, `wheel_id` TEXT, `label` TEXT, `session_key` TEXT, `recorded_at` INTEGER)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startedAt` INTEGER NOT NULL, `endedAt` INTEGER, `rotationCount` INTEGER NOT NULL, `mantrasPerRotation` INTEGER NOT NULL, `totalMantras` TEXT NOT NULL, `mantraId` TEXT NOT NULL, `dedication` TEXT, `mode` TEXT NOT NULL, `average_rpm` REAL NOT NULL, `peak_rpm` REAL NOT NULL, `total_spins` INTEGER NOT NULL, `intention` TEXT, `session_goal` INTEGER, `wheel_id` TEXT, `label` TEXT, `session_key` TEXT, `recorded_at` INTEGER, `duration_seconds` INTEGER)",
         "fields": [
           {
             "fieldPath": "id",
@@ -106,6 +106,11 @@
           {
             "fieldPath": "recordedAt",
             "columnName": "recorded_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "durationSeconds",
+            "columnName": "duration_seconds",
             "affinity": "INTEGER"
           }
         ],
@@ -291,7 +296,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '8d07b4f470f8e5bc58f604cdf0a39d83')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'a3899831d6046cda1c1c69e4af66f054')"
     ]
   }
 }

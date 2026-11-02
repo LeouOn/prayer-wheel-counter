@@ -558,6 +558,13 @@ class WheelViewModel(
     // Drag tracking
     private val dragHistory = mutableListOf<SpinPhysics.DragSample>()
     private var sessionStartTime: Long? = null
+
+    /**
+     * Base of the live session timer (duration = now − base). Equals
+     * [sessionStartTime] for a new session; for a resumed one it is set so the
+     * timer continues from the row's recorded duration (idle gap excluded).
+     */
+    private var sessionTimerBase: Long? = null
     private var currentSessionRotations = 0L
     private var currentSessionMantras = BigInteger.ZERO
     /**
@@ -1638,10 +1645,13 @@ class WheelViewModel(
             // average re-converges from zero rather than from stale state.
             rpmSampleCount = 0
             sessionStartRpmSum = 0f
-            val elapsedMs = (System.currentTimeMillis() - session.startedAt)
-                .coerceAtLeast(0L)
-            _sessionDuration.value = elapsedMs
-            _sessionDurationSeconds.value = elapsedMs / 1000
+            // Continue from the recorded practice time, not from startedAt: the
+            // gap between the original end and now was not practice.
+            val now = System.currentTimeMillis()
+            val timerBase = SessionRules.resumeTimerBase(now, LifetimeStatsMath.storedDurationSeconds(session))
+            sessionTimerBase = timerBase
+            _sessionDuration.value = now - timerBase
+            _sessionDurationSeconds.value = (now - timerBase) / 1000
             pendingSessionLabel = session.label
 
             startNotificationService()
@@ -1649,7 +1659,7 @@ class WheelViewModel(
             // Restart the session timer (mirrors startSessionIfNeeded). The
             // timeGoalReached flag is pre-set when the resumed session already
             // meets the goal so we don't immediately fire the milestone haptic.
-            startSessionTimer(session.startedAt, skipGoalIfAlreadyMet = true)
+            startSessionTimer(timerBase, skipGoalIfAlreadyMet = true)
             startCheckpointing()
             checkpointNow()
         }
@@ -1753,6 +1763,7 @@ class WheelViewModel(
         val now = System.currentTimeMillis()
         if (SessionRules.needsNewSession(sessionStartTime)) {
             sessionStartTime = now
+            sessionTimerBase = now
             sessionKey = java.util.UUID.randomUUID().toString()
             currentSessionRotations = 0L
             currentSessionMantras = BigInteger.ZERO
@@ -2066,19 +2077,21 @@ class WheelViewModel(
         }
         val end = endedAt.coerceAtLeast(startTime)
         val session = createSessionFromCurrentState(end) ?: return
-        val durationSeconds = SessionRules.endedSessionDurationSeconds(startTime, end)
+        val timerBase = sessionTimerBase ?: startTime
+        val durationSeconds = SessionRules.endedSessionDurationSeconds(timerBase, end)
 
         // Hand the session off: no further timer ticks, checkpoints or
         // notifications for it, and no onCleared/worker save (it's recorded below).
         sessionKey = null
         sessionStartTime = null
+        sessionTimerBase = null
         sessionTimerJob?.cancel()
         sessionTimerJob = null
         stopCheckpointing()
         stopNotificationService()
         sessionStopJob?.cancel()
         sessionStopJob = null
-        _sessionDuration.value = end - startTime
+        _sessionDuration.value = (end - timerBase).coerceAtLeast(0L)
         _sessionDurationSeconds.value = durationSeconds
 
         val recordJob = viewModelScope.launch { recordCompletedSession(session, durationSeconds) }
@@ -2092,6 +2105,7 @@ class WheelViewModel(
 
     private fun resetSessionState() {
         sessionStartTime = null
+        sessionTimerBase = null
         currentSessionRotations = 0L
         currentSessionMantras = BigInteger.ZERO
         sessionKey = null

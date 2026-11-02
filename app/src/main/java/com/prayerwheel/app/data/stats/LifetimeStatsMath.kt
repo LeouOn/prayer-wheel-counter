@@ -68,7 +68,11 @@ object LifetimeStatsMath {
         } else r
     }
 
-    /** Session duration as `(endedAt ?: startedAt) − startedAt`, in whole seconds (truncated). */
+    /**
+     * Duration credited for [session]: its recorded `durationSeconds` (v5+),
+     * else `(endedAt ?: startedAt) − startedAt`, in whole seconds (truncated).
+     */
     fun storedDurationSeconds(session: Session): Long =
-        ((session.endedAt ?: session.startedAt) - session.startedAt) / 1000
+        session.durationSeconds
+            ?: (((session.endedAt ?: session.startedAt) - session.startedAt) / 1000)
 }
