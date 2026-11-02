@@ -105,7 +105,7 @@ Never commit a keystore.
 
 ## Privacy
 
-No network, no accounts, no telemetry. All data local. Microphone permission only if breath mode is enabled. Sessions, lifetime totals and settings are included in Android backup / device transfer (Room database and DataStore only).
+No network, no accounts, no telemetry. All data local. Microphone permission only if breath mode is enabled; the microphone is used only while the app is on screen. Sessions, lifetime totals and settings are included in Android backup / device transfer (Room database and DataStore only).
 
 ## Design Philosophy
 

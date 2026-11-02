@@ -10,7 +10,7 @@
 - **Year/day boundaries (Dec 31 → Jan 1) — fixed**: date-picker day/year shift, calendar streak, stale "today" card, alarms after time-zone change, late end-of-day summary.
 - **Maintainability**: god files split, pure logic extracted, 0 → 177 unit tests (§6).
 - **Decided 2026-11-02**: merge threshold and dead settings removed, Number Notation wired up, SPEC updated to the as-built tone (see "Decisions").
-- **Not yet done**: on-device smoke test, the compileSdk 37 dependency wave, and the breath-mode background question.
+- **Not yet done**: on-device smoke test and the compileSdk 37 dependency wave.
 
 ## 1. Planned vs. built
 
@@ -117,7 +117,7 @@ Deferred: unifying the 6 copy-pasted gesture handlers and divergent glow copies 
 1. **Session merge threshold** — removed (2026-11-02).
 2. **Dead settings** — removed, except Number Notation, which was implemented (2026-11-02).
 3. **Tone** — SPEC §2, §3.6, §10, §11 updated to match the app (2026-11-02).
-4. **Breath mode** (open) — stops when the app is backgrounded. If background breath spinning is wanted, it needs a `microphone` foreground service.
+4. **Breath mode** — stops when the app is backgrounded, by design; no microphone foreground service (2026-11-02).
 
 ## 7. Ideas backlog for 2027 (not started)
 

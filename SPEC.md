@@ -96,7 +96,7 @@ Built-in mantras (with optional audio playback at adjustable volume):
 | **Manual** | User drags. Wheel decays. Standard. | Default |
 | **Two-handed** | Wheel only spins while two distinct touch points are maintained. The friction coefficient drops to near-zero while engaged — rewards committed, embodied attention. | Toggle |
 | **Auto-spin** | Set RPM, wheel spins continuously. Useful for background accumulation during other practice (sitting, walking). | Toggle + RPM slider 1–60 |
-| **Wind mode** | Phone's microphone detects breath/wind; ambient audio drives spin. Genuinely playful, gestures toward རླུང་ (wind/prāṇa) symbolism. | Optional / experimental |
+| **Wind mode** | Phone's microphone detects breath/wind; ambient audio drives spin. Genuinely playful, gestures toward རླུང་ (wind/prāṇa) symbolism. Built as "Breath mode"; listens only while the app is in the foreground. | Optional / experimental |
 
 ### 3.5 Session Mechanics
 
