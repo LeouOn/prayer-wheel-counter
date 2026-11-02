@@ -552,7 +552,6 @@ class WheelViewModel(
     }
 
     // RPM tracking state
-    private var rpmSamples = mutableListOf<Float>()
     private var rpmSampleCount = 0
     private var sessionStartRpmSum = 0f
 
@@ -1635,7 +1634,6 @@ class WheelViewModel(
             _averageRpm.value = session.averageRpm
             // Transient RPM samples are not persisted — reset so the running
             // average re-converges from zero rather than from stale state.
-            rpmSamples.clear()
             rpmSampleCount = 0
             sessionStartRpmSum = 0f
             val elapsedMs = (System.currentTimeMillis() - session.startedAt)
@@ -1766,7 +1764,6 @@ class WheelViewModel(
             // prompt still open); this is a new session.
             _rotationCount.value = 0L
             _sessionMantras.value = BigInteger.ZERO
-            rpmSamples.clear()
             rpmSampleCount = 0
             sessionStartRpmSum = 0f
 
@@ -1894,7 +1891,6 @@ class WheelViewModel(
                 }
 
                 // Track samples for average RPM calculation
-                rpmSamples.add(currentRpm)
                 rpmSampleCount++
                 sessionStartRpmSum += currentRpm
 
@@ -2107,7 +2103,6 @@ class WheelViewModel(
         _averageRpm.value = 0f
         _sessionDurationSeconds.value = 0L
         _isPaused.value = false
-        rpmSamples.clear()
         rpmSampleCount = 0
         sessionStartRpmSum = 0f
         sessionTimerJob?.cancel()
