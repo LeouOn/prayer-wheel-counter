@@ -1,21 +1,16 @@
 package com.prayerwheel.app.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -26,7 +21,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,15 +39,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.prayerwheel.app.data.model.Mantras
 import com.prayerwheel.app.data.model.SavedWheel
 import com.prayerwheel.app.viewmodel.WheelViewModel
-import java.text.NumberFormat
-import java.util.Locale
 
 /**
  * Bottom sheet manager for saved prayer wheel profiles.
@@ -401,45 +392,4 @@ private fun MantraSelectorDialog(
             }
         }
     )
-}
-
-/**
- * Formats a number with locale-aware separators.
- */
-private fun formatNumber(value: Long): String {
-    return NumberFormat.getNumberInstance(Locale.getDefault()).format(value)
-}
-
-/**
- * Parses capacity input that may include shorthand notation like "65B", "100M", "1K".
- */
-private fun parseCapacityInput(input: String): Long {
-    val trimmed = input.trim().uppercase(Locale.getDefault())
-    
-    return when {
-        trimmed.isEmpty() -> 0L
-        
-        // Check for shorthand notation
-        trimmed.endsWith("T") -> {
-            val numberPart = trimmed.dropLast(1).replace(",", "").replace(" ", "")
-            ((numberPart.toDoubleOrNull() ?: return 0L) * 1_000_000_000_000L).toLong()
-        }
-        trimmed.endsWith("B") -> {
-            val numberPart = trimmed.dropLast(1).replace(",", "").replace(" ", "")
-            ((numberPart.toDoubleOrNull() ?: return 0L) * 1_000_000_000L).toLong()
-        }
-        trimmed.endsWith("M") -> {
-            val numberPart = trimmed.dropLast(1).replace(",", "").replace(" ", "")
-            ((numberPart.toDoubleOrNull() ?: return 0L) * 1_000_000L).toLong()
-        }
-        trimmed.endsWith("K") -> {
-            val numberPart = trimmed.dropLast(1).replace(",", "").replace(" ", "")
-            ((numberPart.toDoubleOrNull() ?: return 0L) * 1_000L).toLong()
-        }
-        
-        // Regular number
-        else -> {
-            trimmed.replace(",", "").replace(" ", "").toLongOrNull() ?: 0L
-        }
-    }
 }

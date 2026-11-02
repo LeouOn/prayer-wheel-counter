@@ -2,7 +2,6 @@ package com.prayerwheel.app.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,10 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -39,7 +35,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -415,13 +410,6 @@ private fun sliderPositionToLongValue(position: Float): Long {
 }
 
 /**
- * Formats a number with locale-aware thousand separators.
- */
-private fun formatNumber(value: Long): String {
-    return NumberFormat.getNumberInstance(Locale.getDefault()).format(value)
-}
-
-/**
  * Formats a number for display in the input field, using shorthand for large values.
  */
 private fun formatNumberForInput(value: Long): String {
@@ -431,39 +419,5 @@ private fun formatNumberForInput(value: Long): String {
         value >= 1_000_000L -> "${value / 1_000_000L}M"
         value >= 1_000L -> "${value / 1_000L}K"
         else -> NumberFormat.getNumberInstance(Locale.getDefault()).format(value)
-    }
-}
-
-/**
- * Parses capacity input that may include shorthand notation like "65B", "100M", "1K".
- */
-private fun parseCapacityInput(input: String): Long {
-    val trimmed = input.trim().uppercase(Locale.getDefault())
-    
-    return when {
-        trimmed.isEmpty() -> 0L
-        
-        // Check for shorthand notation
-        trimmed.endsWith("T") -> {
-            val numberPart = trimmed.dropLast(1).replace(",", "").replace(" ", "")
-            ((numberPart.toDoubleOrNull() ?: return 0L) * 1_000_000_000_000L).toLong()
-        }
-        trimmed.endsWith("B") -> {
-            val numberPart = trimmed.dropLast(1).replace(",", "").replace(" ", "")
-            ((numberPart.toDoubleOrNull() ?: return 0L) * 1_000_000_000L).toLong()
-        }
-        trimmed.endsWith("M") -> {
-            val numberPart = trimmed.dropLast(1).replace(",", "").replace(" ", "")
-            ((numberPart.toDoubleOrNull() ?: return 0L) * 1_000_000L).toLong()
-        }
-        trimmed.endsWith("K") -> {
-            val numberPart = trimmed.dropLast(1).replace(",", "").replace(" ", "")
-            ((numberPart.toDoubleOrNull() ?: return 0L) * 1_000L).toLong()
-        }
-        
-        // Regular number
-        else -> {
-            trimmed.replace(",", "").replace(" ", "").toLongOrNull() ?: 0L
-        }
     }
 }

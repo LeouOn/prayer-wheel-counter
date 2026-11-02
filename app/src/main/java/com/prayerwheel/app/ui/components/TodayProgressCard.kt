@@ -225,11 +225,3 @@ private fun DoneMarker(done: Boolean, sizeDp: Dp, outlineColor: Color) {
         )
     }
 }
-
-private fun formatPracticeTime(seconds: Long): String {
-    if (seconds <= 0L) return "0m"
-    val totalMinutes = seconds / 60L
-    val hours = totalMinutes / 60L
-    val minutes = totalMinutes % 60L
-    return if (hours > 0L) "${hours}h ${minutes}m" else "${minutes}m"
-}
