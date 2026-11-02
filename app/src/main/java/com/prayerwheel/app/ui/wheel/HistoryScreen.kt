@@ -74,6 +74,7 @@ import kotlinx.coroutines.launch
 
 import java.math.BigInteger
 import java.text.SimpleDateFormat
+import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 
@@ -126,18 +127,19 @@ fun HistoryScreen(
         }
     }
 
-    // Calculate time-based thresholds
-    val now = System.currentTimeMillis()
-    val todayStart = remember {
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        sdf.parse(sdf.format(Date(now)))?.time ?: now
-    }
-    val sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000L)
-    val thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000L)
+    // Refreshes on resume and after local midnight, so "Today" never goes stale.
+    val today = rememberToday()
 
     // Filter sessions
-    val filteredSessions = remember(sessionsList, selectedMantraFilter, selectedTimeFilter, selectedModeFilter) {
+    val filteredSessions = remember(
+        sessionsList, selectedMantraFilter, selectedWheelFilter, selectedTimeFilter, selectedModeFilter, today
+    ) {
         val currentMode = selectedModeFilter
+        // Time thresholds are computed each time the filter runs, not once per screen.
+        val now = System.currentTimeMillis()
+        val todayStart = today.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000L)
+        val thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000L)
         sessionsList.filter { session ->
             val matchesMantra = selectedMantraFilter == null || session.mantraId == selectedMantraFilter
             val matchesWheel = selectedWheelFilter == null || session.wheelId == selectedWheelFilter
