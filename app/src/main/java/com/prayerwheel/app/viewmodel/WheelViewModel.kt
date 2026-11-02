@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -65,8 +66,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.math.BigInteger
 import java.time.ZoneId
-import java.util.Calendar
-import java.util.TimeZone
 import kotlin.math.abs
 import kotlin.math.atan2
 
@@ -102,6 +101,7 @@ class WheelViewModel(
         private const val HAPTIC_PAUSE_DURATION = 50L
         private const val HAPTIC_SLIDER_DURATION = 3L
         private const val SESSION_TIMER_INTERVAL_MS = 1000L
+        private const val DAY_WINDOW_REFRESH_MS = 60_000L
 
         // Breath-mode physics constants live in [SpinPhysics]; this alias keeps the
         // physics-loop keep-alive condition readable.
@@ -884,58 +884,46 @@ class WheelViewModel(
 
     /**
      * Collects today's sessions via SessionDao.observeSessionsForDay and reduces them
-     * into the four TodayProgress state flows. Recomputed whenever sessions change OR
-     * when the local calendar day rolls over (polled every 60s) OR when the user
-     * changes reminderEveningHour (since that drives morning/evening attribution).
+     * into the four TodayProgress state flows. Recomputed whenever sessions change,
+     * when the user changes reminderEveningHour (it drives morning/evening
+     * attribution), and whenever the local day or time zone changes.
+     *
+     * The day window is recomputed from the current wall-clock date and
+     * `ZoneId.systemDefault()` immediately whenever the app returns to the
+     * foreground, then every 60 s while it stays there. (It used to `delay()`
+     * until midnight; coroutine delays on Main are uptime-based and stall in
+     * deep sleep, so after an overnight sleep Jan 1 still showed Dec 31's
+     * totals, and zone changes were ignored.)
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun observeTodayProgress() {
         viewModelScope.launch {
-            val dayWindow = flow {
-                while (isActive) {
-                    emit(currentDayWindow())
-                    val now = System.currentTimeMillis()
-                    val tomorrow = startOfNextDay(now)
-                    delay((tomorrow - now + 1000L).coerceAtLeast(60_000L))
+            val dayWindow = _isAppInForeground.flatMapLatest { inForeground ->
+                if (inForeground) {
+                    flow {
+                        while (true) {
+                            emit(SessionRules.dayWindow(System.currentTimeMillis(), ZoneId.systemDefault()))
+                            delay(DAY_WINDOW_REFRESH_MS)
+                        }
+                    }
+                } else {
+                    emptyFlow() // keep the last window; refreshed on return to foreground
                 }
             }.distinctUntilChanged()
 
             dayWindow.combine(userPreferences.reminderEveningHour) { window, eveningHour ->
                 window to eveningHour
             }.distinctUntilChanged().flatMapLatest { (window, eveningHour) ->
-                sessionDao.observeSessionsForDay(window.first, window.second)
-                    .map { sessions -> sessions to eveningHour }
-            }.collect { (sessions, eveningHour) ->
-                val progress = SessionRules.todayProgress(sessions, eveningHour, ZoneId.systemDefault())
+                sessionDao.observeSessionsForDay(window.startMs, window.endMs)
+                    .map { sessions -> Triple(sessions, eveningHour, window.zone) }
+            }.collect { (sessions, eveningHour, zone) ->
+                val progress = SessionRules.todayProgress(sessions, eveningHour, zone)
                 _todayMorningCompleted.value = progress.morningCompleted
                 _todayEveningCompleted.value = progress.eveningCompleted
                 _todayMantraCount.value = progress.mantras
                 _todayPracticeSeconds.value = progress.practiceSeconds
             }
         }
-    }
-
-    private fun startOfNextDay(epochMillis: Long): Long {
-        val calendar = Calendar.getInstance(TimeZone.getDefault())
-        calendar.timeInMillis = epochMillis
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        calendar.set(Calendar.MILLISECOND, 0)
-        calendar.add(Calendar.DAY_OF_MONTH, 1)
-        return calendar.timeInMillis
-    }
-
-    private fun currentDayWindow(): Pair<Long, Long> {
-        val calendar = Calendar.getInstance(TimeZone.getDefault())
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        calendar.set(Calendar.MILLISECOND, 0)
-        val startOfDay = calendar.timeInMillis
-        calendar.add(Calendar.DAY_OF_MONTH, 1)
-        val startOfNextDay = calendar.timeInMillis
-        return startOfDay to startOfNextDay
     }
 
     /**

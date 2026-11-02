@@ -3,6 +3,7 @@ package com.prayerwheel.app.viewmodel.session
 import com.prayerwheel.app.data.model.Session
 import java.math.BigInteger
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 
 /**
@@ -63,6 +64,24 @@ object SessionRules {
      */
     fun endedSessionDurationSeconds(startedAtMs: Long, endedAtMs: Long): Long =
         (endedAtMs - startedAtMs).coerceAtLeast(0L) / 1000L
+
+    /** A local calendar day as a half-open `[startMs, endMs)` epoch-millis window. */
+    data class DayWindow(val date: LocalDate, val zone: ZoneId, val startMs: Long, val endMs: Long)
+
+    /**
+     * Bounds of the local calendar day containing [nowMs] in [zone]. Computed
+     * from the current date every time (never by adding 24 h), so DST days
+     * are 23/25 h long and a time-zone change yields the new zone's day.
+     */
+    fun dayWindow(nowMs: Long, zone: ZoneId): DayWindow {
+        val date = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
+        return DayWindow(
+            date = date,
+            zone = zone,
+            startMs = date.atStartOfDay(zone).toInstant().toEpochMilli(),
+            endMs = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        )
+    }
 
     /** Local hour-of-day (0..23) of [epochMillis] in [zone]. */
     fun hourOfDay(epochMillis: Long, zone: ZoneId): Int =

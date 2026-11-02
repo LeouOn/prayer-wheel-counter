@@ -115,6 +115,43 @@ class SessionRulesTest {
         assertEquals(0L, SessionRules.endedSessionDurationSeconds(start, start - 5_000))
     }
 
+    // ── dayWindow ──────────────────────────────────────────────────────
+
+    @Test
+    fun dayWindow_isLocalMidnightToMidnight() {
+        val w = SessionRules.dayWindow(utcMillis(15, 30), utc)
+        assertEquals(java.time.LocalDate.of(2026, 3, 10), w.date)
+        assertEquals(utcMillis(0), w.startMs)
+        assertEquals(utcMillis(0) + 86_400_000L, w.endMs)
+    }
+
+    @Test
+    fun dayWindow_newYearAfterOvernight_isTheNewDay() {
+        val ny = ZoneId.of("America/New_York")
+        val jan1 = ZonedDateTime.of(2027, 1, 1, 7, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val w = SessionRules.dayWindow(jan1, ny)
+        assertEquals(java.time.LocalDate.of(2027, 1, 1), w.date)
+        assertEquals(ZonedDateTime.of(2027, 1, 1, 0, 0, 0, 0, ny).toInstant().toEpochMilli(), w.startMs)
+    }
+
+    @Test
+    fun dayWindow_dstDaysAre23And25Hours() {
+        val ny = ZoneId.of("America/New_York")
+        val spring = ZonedDateTime.of(2026, 3, 8, 12, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val fall = ZonedDateTime.of(2026, 11, 1, 12, 0, 0, 0, ny).toInstant().toEpochMilli()
+        val sw = SessionRules.dayWindow(spring, ny)
+        val fw = SessionRules.dayWindow(fall, ny)
+        assertEquals(23 * 3_600_000L, sw.endMs - sw.startMs)
+        assertEquals(25 * 3_600_000L, fw.endMs - fw.startMs)
+    }
+
+    @Test
+    fun dayWindow_followsZoneChange() {
+        val instant = utcMillis(22) // 22:00 UTC on Mar 10 = Mar 11 in Tokyo
+        assertEquals(java.time.LocalDate.of(2026, 3, 10), SessionRules.dayWindow(instant, utc).date)
+        assertEquals(java.time.LocalDate.of(2026, 3, 11), SessionRules.dayWindow(instant, ZoneId.of("Asia/Tokyo")).date)
+    }
+
     // ── autoLabel / isMorning ──────────────────────────────────────────
 
     @Test
