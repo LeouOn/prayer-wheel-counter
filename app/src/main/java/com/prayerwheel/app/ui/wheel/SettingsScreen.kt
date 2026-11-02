@@ -1094,11 +1094,10 @@ fun SettingsScreen(
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            scope.launch {
-                                userPreferences.clearAllData()
-                                sessionDao.deleteAll()
-                                lifetimeStatsDao.deleteAll()
-                            }
+                            // Runs in the VM/app scope (not this composable's scope)
+                            // so leaving Settings mid-reset can't half-reset, and the
+                            // live in-memory session is discarded too.
+                            viewModel.resetAllData()
                             showResetDialog = false
                         }
                     ) {

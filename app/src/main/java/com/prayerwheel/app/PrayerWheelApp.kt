@@ -13,6 +13,9 @@ import androidx.room.Room
 import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.data.db.AppDatabase
 import com.prayerwheel.app.data.db.MIGRATION_3_4
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "user_preferences")
 
@@ -31,6 +34,12 @@ class PrayerWheelApp : Application() {
 
     lateinit var vibrator: Vibrator
         private set
+
+    /**
+     * Process-lifetime scope for writes that must not be cancelled when a
+     * screen or the ViewModel goes away (session saves, checkpoints, resets).
+     */
+    val applicationScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onCreate() {
         super.onCreate()

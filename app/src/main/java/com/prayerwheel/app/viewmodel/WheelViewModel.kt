@@ -18,6 +18,7 @@ import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.data.datastore.ViewMode
 import com.prayerwheel.app.data.datastore.NumberFormatStyle
 import com.prayerwheel.app.data.datastore.NumberNotation
+import com.prayerwheel.app.data.db.dao.LedgerDao
 import com.prayerwheel.app.data.db.dao.LifetimeStatsDao
 import com.prayerwheel.app.data.db.dao.SessionDao
 import com.prayerwheel.app.data.model.LifetimeStats
@@ -40,7 +41,10 @@ import com.prayerwheel.app.viewmodel.milestones.Milestones
 import com.prayerwheel.app.viewmodel.physics.SpinPhysics
 import com.prayerwheel.app.viewmodel.session.SessionRules
 import androidx.glance.appwidget.updateAll
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,8 +60,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.math.BigInteger
 import java.time.ZoneId
 import java.util.Calendar
@@ -75,6 +77,9 @@ import kotlin.math.atan2
 class WheelViewModel(
     private val lifetimeStatsDao: LifetimeStatsDao,
     private val sessionDao: SessionDao,
+    private val ledgerDao: LedgerDao,
+    /** Process-lifetime scope: durable writes run here so VM teardown can't cancel them. */
+    private val appScope: CoroutineScope,
     private val userPreferences: UserPreferences,
     private val vibrator: Vibrator,
     private val appContext: Context
@@ -101,12 +106,29 @@ class WheelViewModel(
     }
 
     /**
-     * Serializes all lifetime_stats DB read-modify-write sequences. Without this,
-     * concurrent coroutines (session-end save, manual log, undo-delete, subtract
-     * on delete/resume) can read the same row, increment separately, and the
-     * loser's upsert clobbers the winner's increment — a silent lost update.
+     * Runs a ledger write in [appScope] and awaits it, so leaving the screen or
+     * clearing the VM cannot cancel a write half-way (the caller may be
+     * cancelled, the write is not). All session + lifetime_stats mutations go
+     * through [LedgerDao]'s `@Transaction` methods, which SQLite serializes
+     * with every other writer (SessionSaveWorker, resets) — replacing the old
+     * VM-only mutex that the worker and Settings reset could not see.
+     *
+     * Disk-full and other failures are surfaced via [saveError]; returns null
+     * on failure.
      */
-    private val lifetimeStatsMutex = Mutex()
+    private suspend fun <T> durableWrite(what: String, block: suspend () -> T): T? = try {
+        appScope.async { block() }.await()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: android.database.sqlite.SQLiteFullException) {
+        Log.e("WheelViewModel", "Disk full - $what not saved", e)
+        _saveError.value = "Storage is full. Unable to save session data. Please free up space."
+        null
+    } catch (e: Exception) {
+        Log.e("WheelViewModel", "Failed to save $what", e)
+        _saveError.value = "Unable to save $what. Please try again."
+        null
+    }
 
     /**
      * Procedural audio engine — singing bowl tones at lifetime milestones and an
@@ -1300,18 +1322,11 @@ class WheelViewModel(
                 wheelId = wheelId
             )
 
-            sessionDao.insert(session)
-
-            // Update lifetime stats under the mutex so this read-modify-write cannot
-            // interleave with session-end, undo-delete, or subtract operations.
-            val newTotalMantras = lifetimeStatsMutex.withLock {
-                val existing = lifetimeStatsDao.getStats()
-                // Duration is the user-entered value (not endedAt - startedAt).
-                val updated = LifetimeStatsMath.plusSession(existing, session, durationSeconds)
-                lifetimeStatsDao.upsert(updated)
-                updated.totalMantras
-            }
-            checkAchievements(newTotalMantras)
+            // Duration is the user-entered value (not endedAt - startedAt).
+            val recorded = durableWrite("practice log") {
+                ledgerDao.recordSession(session, durationSeconds)
+            } ?: return@launch
+            checkAchievements(recorded.stats.totalMantras)
         }
     }
 
@@ -1320,8 +1335,7 @@ class WheelViewModel(
      */
     fun deleteSession(session: Session) {
         viewModelScope.launch {
-            sessionDao.deleteSessionById(session.id)
-            subtractSessionFromStats(session)
+            durableWrite("deletion") { ledgerDao.deleteSessionAndDebit(session.id) }
         }
     }
 
@@ -1340,25 +1354,7 @@ class WheelViewModel(
      */
     fun undoDeleteSession(session: Session) {
         viewModelScope.launch {
-            sessionDao.insert(session)
-            val sessionDurationSeconds = LifetimeStatsMath.storedDurationSeconds(session)
-            // Hold the mutex across read-modify-write to serialize with other lifetime_stats writers.
-            lifetimeStatsMutex.withLock {
-                val existing = lifetimeStatsDao.getStats()
-                val newStats = LifetimeStatsMath.plusSession(existing, session, sessionDurationSeconds)
-                lifetimeStatsDao.upsert(newStats)
-            }
-        }
-    }
-
-    private suspend fun subtractSessionFromStats(session: Session) {
-        // Hold the mutex across read-modify-write so concurrent adders (session save,
-        // manual log, undo-delete) can't interleave with this subtraction and clobber it.
-        lifetimeStatsMutex.withLock {
-            val existing = lifetimeStatsDao.getStats() ?: return@withLock
-            val sessionDuration = LifetimeStatsMath.storedDurationSeconds(session)
-            val newStats = LifetimeStatsMath.minusSession(existing, session, sessionDuration)
-            lifetimeStatsDao.upsert(newStats)
+            durableWrite("restored session") { ledgerDao.restoreSession(session) }
         }
     }
 
@@ -1367,30 +1363,59 @@ class WheelViewModel(
      * session records in the sessions table (so history is still browsable).
      * Use this to start fresh after correcting a data-corruption bug.
      *
-     * Holds the same [lifetimeStatsMutex] as every other lifetime_stats writer so
-     * a concurrent session-end save cannot interleave with this reset.
+     * Runs as one [LedgerDao] transaction, serialized with every other
+     * lifetime_stats writer (VM saves, SessionSaveWorker).
      */
     fun resetLifetimeStats() {
         viewModelScope.launch {
-            lifetimeStatsMutex.withLock {
-                lifetimeStatsDao.upsert(
-                    LifetimeStats(
-                        id = 1,
-                        totalRotations = 0L,
-                        totalMantras = BigInteger.ZERO,
-                        sessionsCompleted = 0L,
-                        firstSessionAt = null,
-                        totalSpinningTimeSeconds = 0L,
-                        averageSessionDurationSeconds = 0L
-                    )
-                )
-            }
+            durableWrite("lifetime reset") { ledgerDao.resetLifetime() } ?: return@launch
             // In-memory display reset so the wheel screen updates immediately.
             _lifetimeMantras.value = BigInteger.ZERO
             _highestMilestoneTier.value = 0
             // Trigger widget refresh (same pattern as the rotation-completion path).
             runCatching { PrayerWheelWidget().updateAll(appContext) }
         }
+    }
+
+    /**
+     * "Reset All Data": discards the in-memory live session (and any pending
+     * dedication), cancels a queued SessionSaveWorker, then deletes every
+     * session, the lifetime row and all preferences.
+     *
+     * The live session is discarded synchronously, before the DB work, so a
+     * session end / worker cannot re-insert it after the wipe. The DB work
+     * runs in [appScope] — not the Settings composable's scope — so leaving
+     * the screen mid-reset cannot leave a half-reset database.
+     */
+    fun resetAllData() {
+        discardLiveSession()
+        SessionSaveWorker.cancel(appContext)
+        appScope.launch {
+            try {
+                ledgerDao.resetAll()
+                userPreferences.clearAllData()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("WheelViewModel", "Reset all data failed", e)
+                _saveError.value = "Unable to reset data. Please try again."
+                return@launch
+            }
+            _lifetimeMantras.value = BigInteger.ZERO
+            _highestMilestoneTier.value = 0
+            runCatching { PrayerWheelWidget().updateAll(appContext) }
+        }
+    }
+
+    /** Drops the live session and any pending dedication without saving them. */
+    private fun discardLiveSession() {
+        sessionStopJob?.cancel()
+        sessionStopJob = null
+        stopPhysicsLoop()
+        _angularVelocity.value = 0f
+        pendingDedicationSession = null
+        _showDedicationPrompt.value = false
+        resetSessionState()
     }
 
     /**
@@ -1478,8 +1503,7 @@ class WheelViewModel(
             // original was saved, again when updateLifetimeStats() runs at the resumed
             // session's end. updateLifetimeStats() re-adds the full accumulated total.
             if (session.id != 0L) {
-                sessionDao.deleteSessionById(session.id)
-                subtractSessionFromStats(session)
+                durableWrite("resumed session") { ledgerDao.deleteSessionAndDebit(session.id) }
             }
 
             // Mirror startSessionIfNeeded() restoration, but preserve the
@@ -1528,10 +1552,7 @@ class WheelViewModel(
                 val endedAt = System.currentTimeMillis()
                 val session = createSessionFromPending(pending, endedAt, dedication)
 
-                sessionDao.insert(session)
-
-                // Update lifetime stats (carrying forward spinning time fields)
-                updateLifetimeStats(session)
+                recordCompletedSession(session)
             }
 
             pendingDedicationSession = null
@@ -1547,8 +1568,7 @@ class WheelViewModel(
         viewModelScope.launch {
             pendingDedicationSession?.let { pending ->
                 val session = createSessionFromPending(pending, System.currentTimeMillis(), null)
-                sessionDao.insert(session)
-                updateLifetimeStats(session)
+                recordCompletedSession(session)
             }
             pendingDedicationSession = null
             _showDedicationPrompt.value = false
@@ -1609,35 +1629,19 @@ class WheelViewModel(
     }
 
     /**
-     * Updates lifetime stats by upserting with carried-forward spinning time fields.
-     * SQLiteFullException (disk full) is caught and surfaced via [_saveError]; we
-     * bail before achievements/milestone updates so a write failure does not produce
-     * a misleading tier bump based on stale in-memory state.
+     * Inserts [session] and credits it to lifetime stats in ONE transaction.
+     * SQLiteFullException (disk full) is surfaced via [_saveError]; on failure we
+     * bail before achievements/milestone updates so a write failure does not
+     * produce a misleading tier bump based on stale in-memory state.
      */
-    private suspend fun updateLifetimeStats(session: Session) {
+    private suspend fun recordCompletedSession(session: Session) {
+        // Duration is the live session timer (_sessionDurationSeconds), not endedAt - startedAt.
         val sessionDurationSeconds = _sessionDurationSeconds.value
-        val newStats = try {
-            // Hold the mutex across the read-modify-write so concurrent writers (manual log,
-            // undo-delete, subtract) can't interleave and clobber each other's increment.
-            lifetimeStatsMutex.withLock {
-                val existing = lifetimeStatsDao.getStats()
-
-                // Duration is the live session timer (_sessionDurationSeconds), not endedAt - startedAt.
-                val updated = LifetimeStatsMath.plusSession(existing, session, sessionDurationSeconds)
-
-                lifetimeStatsDao.upsert(updated)
-                updated
-            }
-        } catch (e: android.database.sqlite.SQLiteFullException) {
-            android.util.Log.e("WheelViewModel", "Disk full - session stats not saved", e)
-            _saveError.value = "Storage is full. Unable to save session data. Please free up space."
-            return
-        } catch (e: Exception) {
-            android.util.Log.e("WheelViewModel", "Failed to save session", e)
-            return
-        }
-        checkAchievements(newStats.totalMantras)
-        updateHighestMilestoneTier(newStats.totalMantras)
+        val recorded = durableWrite("session") {
+            ledgerDao.recordSession(session, sessionDurationSeconds)
+        } ?: return
+        checkAchievements(recorded.stats.totalMantras)
+        updateHighestMilestoneTier(recorded.stats.totalMantras)
     }
 
     private fun startSessionIfNeeded() {
@@ -1868,7 +1872,7 @@ class WheelViewModel(
         viewModelScope.launch {
             // In-memory lifetime mantras only — provides the live display while spinning.
             // The lifetime_stats DB row is written EXACTLY ONCE per session at session end
-            // via updateLifetimeStats(). Writing it here on every rotation caused every
+            // via recordCompletedSession(). Writing it here on every rotation caused every
             // session's mantras to be double-counted: once incrementally per-rotation here,
             // then again at session save, inflating lifetime totals by N×.
             val mantrasThisRotation = _mantrasPerRotation.value.toBigInteger() * count.toBigInteger()
@@ -2257,13 +2261,17 @@ class WheelViewModel(
     class Factory(
         private val lifetimeStatsDao: LifetimeStatsDao,
         private val sessionDao: SessionDao,
+        private val ledgerDao: LedgerDao,
+        private val appScope: CoroutineScope,
         private val userPreferences: UserPreferences,
         private val vibrator: Vibrator,
         private val appContext: Context
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return WheelViewModel(lifetimeStatsDao, sessionDao, userPreferences, vibrator, appContext) as T
+            return WheelViewModel(
+                lifetimeStatsDao, sessionDao, ledgerDao, appScope, userPreferences, vibrator, appContext
+            ) as T
         }
     }
 }

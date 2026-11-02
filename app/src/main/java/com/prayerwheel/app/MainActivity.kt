@@ -67,6 +67,8 @@ class MainActivity : ComponentActivity() {
                         factory = WheelViewModel.Factory(
                             lifetimeStatsDao = app.database.lifetimeStatsDao(),
                             sessionDao = app.database.sessionDao(),
+                            ledgerDao = app.database.ledgerDao(),
+                            appScope = app.applicationScope,
                             userPreferences = app.userPreferences,
                             vibrator = app.vibrator,
                             appContext = applicationContext

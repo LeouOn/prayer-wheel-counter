@@ -2,7 +2,6 @@ package com.prayerwheel.app.work
 
 import android.content.Context
 import android.util.Log
-import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -11,7 +10,6 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.prayerwheel.app.PrayerWheelApp
 import com.prayerwheel.app.data.model.Session
-import com.prayerwheel.app.data.stats.LifetimeStatsMath
 import java.math.BigInteger
 
 /**
@@ -28,11 +26,9 @@ import java.math.BigInteger
  * saved with `dedication = null`. The user can edit/add a dedication later from
  * the History screen.
  *
- * The lifetime-stats update uses the same [LifetimeStatsMath.plusSession] as
- * `WheelViewModel.updateLifetimeStats`:
- * `totalSpinningTimeSeconds` and `averageSessionDurationSeconds` are carried
- * forward (the bug fixed in T5 — where every live rotation clobbered those
- * fields — must not regress via this code path).
+ * The session insert and lifetime-stats credit go through the same
+ * transactional [com.prayerwheel.app.data.db.dao.LedgerDao.recordSession] as
+ * the ViewModel, so the worker is serialized with every other writer.
  */
 class SessionSaveWorker(
     appContext: Context,
@@ -81,23 +77,13 @@ class SessionSaveWorker(
         )
 
         val database = (applicationContext as PrayerWheelApp).database
-        val sessionDao = database.sessionDao()
-        val lifetimeStatsDao = database.lifetimeStatsDao()
 
         try {
-            // Wrap both writes in a single Room transaction. Without this, a crash
-            // between `sessionDao.insert` and `lifetimeStatsDao.upsert` lets
-            // WorkManager retry the worker, re-running `insert` and producing a
-            // duplicate session row. Atomicity here means a failed transaction
-            // leaves nothing inserted, so retries are safe.
-            database.withTransaction {
-                sessionDao.insert(session)
-
-                val existing = lifetimeStatsDao.getStats()
-                // Duration is the VM's live timer value passed in via input data.
-                val newStats = LifetimeStatsMath.plusSession(existing, session, sessionDurationSeconds)
-                lifetimeStatsDao.upsert(newStats)
-            }
+            // One Room transaction for insert + lifetime credit: a crash between
+            // them can't leave a row without its credit, and a failed run leaves
+            // nothing inserted, so retries are safe. Duration is the VM's live
+            // timer value passed in via input data.
+            database.ledgerDao().recordSession(session, sessionDurationSeconds)
         } catch (e: android.database.sqlite.SQLiteFullException) {
             // Disk full — WorkManager's default retry policy would spin forever.
             // Fail this run so the user gets a real error elsewhere; retries
@@ -133,6 +119,11 @@ class SessionSaveWorker(
         const val KEY_WHEEL_ID = "wheel_id"
         const val KEY_LABEL = "label"
         const val KEY_SESSION_DURATION_SECONDS = "session_duration_seconds"
+
+        /** Cancels a queued (not yet run) session save, e.g. before "Reset All Data". */
+        fun cancel(context: Context) {
+            WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_WORK_NAME)
+        }
 
         /**
          * Builds the [androidx.work.OneTimeWorkRequest] for saving the in-flight
