@@ -31,3 +31,6 @@ annotationProcessors.json
 
 # Local config (may contain signing keys)
 local.properties
+
+# Claude Code worktrees
+.claude/worktrees/
