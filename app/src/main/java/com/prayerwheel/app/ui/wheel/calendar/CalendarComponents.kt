@@ -124,12 +124,12 @@ internal fun SummaryCard(totals: MonthlyTotals, streakInfo: Pair<Int, Int>) {
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     Text(
-                        text = "Current streak: $currentStreak days",
+                        text = "Current streak: ${dayCount(currentStreak)}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
                     )
                     Text(
-                        text = "Best: $bestStreak days",
+                        text = "Best: ${dayCount(bestStreak)}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
                     )
@@ -455,3 +455,5 @@ internal fun formatDurationShort(ms: Long): String {
         else -> "-"
     }
 }
+
+private fun dayCount(days: Int): String = if (days == 1) "1 day" else "$days days"

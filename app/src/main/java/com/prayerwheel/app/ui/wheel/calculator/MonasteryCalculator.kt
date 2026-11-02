@@ -161,7 +161,7 @@ internal fun MonasteryCalculator(
     }
 
     val communityWheelPerYear = remember(communityWheelPerDay) {
-        communityWheelPerDay * BigInteger.valueOf(365)
+        mantrasOverDays(communityWheelPerDay, DAYS_PER_YEAR)
     }
 
     Column(
@@ -634,7 +634,7 @@ internal fun MonasteryCalculator(
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
-                val verbalPerYear = communityVerbalPerDay * BigInteger.valueOf(365)
+                val verbalPerYear = mantrasOverDays(communityVerbalPerDay, DAYS_PER_YEAR)
                 val comparisons = buildComparisons(verbalPerYear)
                 comparisons.forEach { comparison ->
                     Text(text = comparison, style = MaterialTheme.typography.bodyMedium)

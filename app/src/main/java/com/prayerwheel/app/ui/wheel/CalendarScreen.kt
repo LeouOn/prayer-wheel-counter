@@ -60,10 +60,13 @@ import com.prayerwheel.app.ui.wheel.calendar.DayStats
 import com.prayerwheel.app.ui.wheel.calendar.HeatMapLegend
 import com.prayerwheel.app.ui.wheel.calendar.MonthlyTotals
 import com.prayerwheel.app.ui.wheel.calendar.SummaryCard
+import com.prayerwheel.app.ui.wheel.calendar.computeStreaks
+import com.prayerwheel.app.ui.wheel.calendar.practiceDays
 import com.prayerwheel.app.ui.wheel.calendar.formatDurationShort
 import kotlinx.coroutines.launch
 import java.math.BigInteger
 import java.text.SimpleDateFormat
+import java.time.ZoneId
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -130,12 +133,25 @@ fun CalendarScreen(
         }
     }
 
-    val today = remember {
-        val cal = Calendar.getInstance()
-        Triple(
-            cal.get(Calendar.YEAR),
-            cal.get(Calendar.MONTH),
-            cal.get(Calendar.DAY_OF_MONTH)
+    val todayDate = rememberToday()
+    val today = remember(todayDate) {
+        // Calendar months are 0-based; LocalDate months are 1-based.
+        Triple(todayDate.year, todayDate.monthValue - 1, todayDate.dayOfMonth)
+    }
+
+    // Streaks span all history, not just the displayed month, so a run that
+    // crosses a month or year boundary (Dec 31 -> Jan 1) keeps counting.
+    val allSessionsFlow = remember(sessionDao) { sessionDao.getAllSessions() }
+    val allSessions by allSessionsFlow.collectAsState(initial = emptyList())
+    val allPracticeDays = remember(allSessions, selectedMantraFilter, selectedWheelFilter) {
+        val zone = ZoneId.systemDefault()
+        practiceDays(
+            allSessions.asSequence()
+                .filter { selectedMantraFilter == null || it.mantraId == selectedMantraFilter }
+                .filter { selectedWheelFilter == null || it.wheelId == selectedWheelFilter }
+                .map { it.startedAt }
+                .asIterable(),
+            zone
         )
     }
 
@@ -162,32 +178,9 @@ fun CalendarScreen(
         sessionsByDay.values.maxOfOrNull { it.totalMantras } ?: BigInteger.ZERO
     }
 
-    val streakInfo = remember(sessionsByDay, currentMonth) {
-        val cal = Calendar.getInstance()
-        var currentStreak = 0
-        var bestStreak = 0
-        var tempStreak = 0
-
-        val daysInMonth = currentMonth.getActualMaximum(Calendar.DAY_OF_MONTH)
-        for (day in 1..daysInMonth) {
-            if (sessionsByDay.containsKey(day)) {
-                tempStreak++
-                bestStreak = maxOf(bestStreak, tempStreak)
-            } else {
-                tempStreak = 0
-            }
-        }
-
-        cal.set(Calendar.DAY_OF_MONTH, daysInMonth)
-        for (day in daysInMonth downTo 1) {
-            if (sessionsByDay.containsKey(day)) {
-                currentStreak++
-            } else if (day != today.third || currentMonth.get(Calendar.MONTH) != today.second || currentMonth.get(Calendar.YEAR) != today.first) {
-                break
-            }
-        }
-
-        Pair(currentStreak, bestStreak)
+    val streakInfo = remember(allPracticeDays, todayDate) {
+        val streaks = computeStreaks(allPracticeDays, todayDate)
+        Pair(streaks.current, streaks.best)
     }
 
     val monthlyTotals = remember(sessionsByDay) {
