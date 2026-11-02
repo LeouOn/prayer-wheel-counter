@@ -19,10 +19,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.prayerwheel.app.data.db.dao.SessionDao
 import com.prayerwheel.app.data.model.LifetimeStats
-import com.prayerwheel.app.data.model.Mantras
 import com.prayerwheel.app.data.model.Session
-import com.prayerwheel.app.ui.components.NumberFormatter
-import com.prayerwheel.app.ui.components.calculateDuration
+import com.prayerwheel.app.ui.wheel.export.buildCsvContent
+import com.prayerwheel.app.ui.wheel.export.buildJsonContent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -225,58 +224,5 @@ private suspend fun saveBackupToDevice(context: Context, sessions: List<Session>
         } catch (e: Exception) {
             throw Exception("Could not save backup: ${e.message}")
         }
-    }
-}
-
-private fun buildCsvContent(sessions: List<Session>): String {
-    return buildString {
-        appendLine("Date,Duration,Mantra,Rotations,Mantras,Avg RPM,Peak RPM,Mode,Intention,Dedication,Wheel")
-        sessions.forEach { session ->
-            val mantra = Mantras.byId(session.mantraId)
-            val displayName = mantra?.displayName ?: session.mantraId
-            val duration = session.endedAt?.let { calculateDuration(session.startedAt, it) } ?: ""
-            val intention = session.intention?.replace("\"", "\"\"") ?: ""
-            val dedication = session.dedication?.replace("\"", "\"\"") ?: ""
-            val dateStr = SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault()).format(Date(session.startedAt))
-            val wheel = session.wheelId ?: ""
-            appendLine("\"$dateStr\",\"$duration\",\"$displayName\",${session.rotationCount},${session.totalMantras},${session.averageRpm},${session.peakRpm},\"${session.mode}\",\"$intention\",\"$dedication\",\"$wheel\"")
-        }
-    }
-}
-
-private fun buildJsonContent(sessions: List<Session>): String {
-    return buildString {
-        appendLine("{")
-        appendLine("  \"exportedAt\": \"${SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault()).format(Date())}\",")
-        appendLine("  \"sessionCount\": ${sessions.size},")
-        appendLine("  \"sessions\": [")
-        sessions.forEachIndexed { index, session ->
-            appendLine("    {")
-            appendLine("      \"id\": ${session.id},")
-            appendLine("      \"startedAt\": ${session.startedAt},")
-            appendLine("      \"endedAt\": ${session.endedAt ?: "null"},")
-            appendLine("      \"rotationCount\": ${session.rotationCount},")
-            appendLine("      \"mantrasPerRotation\": ${session.mantrasPerRotation},")
-            appendLine("      \"totalMantras\": ${session.totalMantras},")
-            appendLine("      \"mantraId\": \"${session.mantraId}\",")
-            appendLine("      \"mode\": \"${session.mode}\",")
-            appendLine("      \"averageRpm\": ${session.averageRpm},")
-            appendLine("      \"peakRpm\": ${session.peakRpm},")
-            appendLine("      \"totalSpins\": ${session.totalSpins},")
-            appendLine("      \"wheelId\": ${if (session.wheelId != null) "\"${session.wheelId}\"" else "null"},")
-            session.intention?.let {
-                appendLine("      \"intention\": \"${it.replace("\"", "\\\"")}\",")
-            } ?: appendLine("      \"intention\": null,")
-            session.dedication?.let {
-                appendLine("      \"dedication\": \"${it.replace("\"", "\\\"")}\"")
-            } ?: appendLine("      \"dedication\": null")
-            if (index < sessions.size - 1) {
-                appendLine("    },")
-            } else {
-                appendLine("    }")
-            }
-        }
-        appendLine("  ]")
-        appendLine("}")
     }
 }
