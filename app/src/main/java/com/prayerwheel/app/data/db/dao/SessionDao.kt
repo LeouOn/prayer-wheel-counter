@@ -21,6 +21,14 @@ interface SessionDao {
     @Update
     suspend fun update(session: Session)
 
+    /**
+     * Targeted label edit. Never write a whole stale [Session] copy from the UI:
+     * a resumed session's row is replaced in place, and a full-row update from
+     * an old copy would silently revert its counts out of step with lifetime_stats.
+     */
+    @Query("UPDATE sessions SET label = :label WHERE id = :id")
+    suspend fun updateLabel(id: Long, label: String?)
+
     @Query("SELECT * FROM sessions ORDER BY startedAt DESC")
     fun getAllSessions(): Flow<List<Session>>
 

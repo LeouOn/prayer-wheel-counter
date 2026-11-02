@@ -21,6 +21,7 @@ import com.prayerwheel.app.data.datastore.NumberNotation
 import com.prayerwheel.app.data.db.dao.LedgerDao
 import com.prayerwheel.app.data.db.dao.LifetimeStatsDao
 import com.prayerwheel.app.data.db.dao.SessionDao
+import com.prayerwheel.app.data.model.ActiveSessionCheckpoint
 import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.data.model.Mantra
 import com.prayerwheel.app.data.model.Mantras
@@ -60,6 +61,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.math.BigInteger
 import java.time.ZoneId
 import java.util.Calendar
@@ -558,7 +561,27 @@ class WheelViewModel(
     private var sessionStartTime: Long? = null
     private var currentSessionRotations = 0L
     private var currentSessionMantras = BigInteger.ZERO
-    private var sessionId: Long? = null
+    /**
+     * Stable identity of the live session (UUID, or the key of the saved row
+     * being resumed). Copied into the checkpoint, the saved [Session] and the
+     * SessionSaveWorker input so every writer upserts the same row. Null when
+     * no session is live; cleared *before* a session is handed off for saving
+     * so a late checkpoint write for it is skipped.
+     */
+    private var sessionKey: String? = null
+
+    /** Periodic [ActiveSessionCheckpoint] writer for the live session. */
+    private var checkpointJob: Job? = null
+
+    /** Recovery of checkpoints left by a killed process; checkpoint writes wait for it. */
+    private var recoveryJob: Job? = null
+
+    /**
+     * Orders this VM's checkpoint writes against its session saves/resets, so
+     * a checkpoint can never be written after its session was saved (which
+     * would leave a stale checkpoint behind).
+     */
+    private val checkpointMutex = Mutex()
     private var pendingDedicationSession: PendingSession? = null
 
     // T15: cached Flow values so the non-suspending session-start path can read them
@@ -572,6 +595,7 @@ class WheelViewModel(
     private var notificationActive = false
 
     private data class PendingSession(
+        val sessionKey: String?,
         val startTime: Long,
         val rotations: Long,
         val mantras: BigInteger,
@@ -764,8 +788,99 @@ class WheelViewModel(
             }
         }
         breathModeController = BreathModeController(appContext, viewModelScope)
+        recoverInterruptedSessions()
         observeTodayProgress()
         loadLifetimeStats()
+    }
+
+    /**
+     * Process-death recovery. Any `active_session` checkpoint left behind means
+     * the app died (OOM kill, crash, force-stop, battery) while a session was
+     * live. Each is recorded as a completed session with no dedication —
+     * exactly what onCleared + SessionSaveWorker would have saved — rather than
+     * restored as the live session: restoring would silently keep a timer
+     * running across the downtime (hours, possibly) and the user may never
+     * come back to end it. The existing "Resume your previous session?" banner
+     * still offers to continue it, replacing the saved row in place.
+     *
+     * Runs in [appScope] so it can't be cancelled half-way; upsert-by-key
+     * makes it safe to race with a pending SessionSaveWorker for the same
+     * session.
+     */
+    private fun recoverInterruptedSessions() {
+        recoveryJob = appScope.launch {
+            val recovered = try {
+                ledgerDao.recoverCheckpoints()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("WheelViewModel", "Checkpoint recovery failed", e)
+                emptyList()
+            }
+            recovered.lastOrNull()?.let { checkAchievements(it.stats.totalMantras) }
+        }
+    }
+
+    /** Snapshot of the live session for checkpointing, or null if there is nothing worth saving. */
+    private fun buildCheckpoint(now: Long = System.currentTimeMillis()): ActiveSessionCheckpoint? {
+        val key = sessionKey ?: return null
+        val startTime = sessionStartTime ?: return null
+        if (currentSessionRotations <= 0L) return null
+        return ActiveSessionCheckpoint(
+            sessionKey = key,
+            startedAt = startTime,
+            updatedAt = now,
+            rotationCount = currentSessionRotations,
+            mantrasPerRotation = _mantrasPerRotation.value,
+            totalMantras = currentSessionMantras,
+            mantraId = _currentMantra.value.id,
+            mode = _spinMode.value.name,
+            averageRpm = if (rpmSampleCount > 0) sessionStartRpmSum / rpmSampleCount else 0f,
+            peakRpm = _peakRpm.value,
+            intention = _currentIntention.value.ifBlank { null },
+            sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null,
+            wheelId = _currentWheelId.value,
+            label = pendingSessionLabel,
+            durationSeconds = _sessionDurationSeconds.value
+        )
+    }
+
+    /**
+     * Persists the live session's checkpoint now (no-op without rotations).
+     * Called every [ActiveSessionCheckpoint.CHECKPOINT_INTERVAL_MS] and when
+     * the app goes to the background. Runs in [appScope]; skipped if the
+     * session was saved/discarded before the write got its turn.
+     */
+    private fun checkpointNow() {
+        val checkpoint = buildCheckpoint() ?: return
+        appScope.launch {
+            recoveryJob?.join()
+            checkpointMutex.withLock {
+                if (sessionKey != checkpoint.sessionKey) return@withLock
+                try {
+                    ledgerDao.saveCheckpoint(checkpoint)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("WheelViewModel", "Checkpoint write failed", e)
+                }
+            }
+        }
+    }
+
+    private fun startCheckpointing() {
+        checkpointJob?.cancel()
+        checkpointJob = viewModelScope.launch {
+            while (isActive) {
+                delay(ActiveSessionCheckpoint.CHECKPOINT_INTERVAL_MS)
+                checkpointNow()
+            }
+        }
+    }
+
+    private fun stopCheckpointing() {
+        checkpointJob?.cancel()
+        checkpointJob = null
     }
 
     /**
@@ -1345,7 +1460,9 @@ class WheelViewModel(
      */
     fun updateSessionLabel(session: Session, newLabel: String?) {
         viewModelScope.launch {
-            sessionDao.update(session.copy(label = newLabel))
+            // Targeted UPDATE: a whole-row write from this (possibly stale) copy
+            // could revert counts of a row that was replaced in place.
+            sessionDao.updateLabel(session.id, newLabel)
         }
     }
 
@@ -1392,7 +1509,7 @@ class WheelViewModel(
         SessionSaveWorker.cancel(appContext)
         appScope.launch {
             try {
-                ledgerDao.resetAll()
+                checkpointMutex.withLock { ledgerDao.resetAll() }
                 userPreferences.clearAllData()
             } catch (e: CancellationException) {
                 throw e
@@ -1478,6 +1595,8 @@ class WheelViewModel(
      *  - interrupted: `dedication == null` (a normally-ended session is not resumable)
      */
     suspend fun detectResumableSession(): Session? {
+        // A session recovered from a checkpoint is the one to offer.
+        recoveryJob?.join()
         val recent = sessionDao.getMostRecentSession() ?: return null
         val now = System.currentTimeMillis()
         return if (SessionRules.isResumable(recent, now, SESSION_NEW_THRESHOLD_MS)) recent else null
@@ -1487,24 +1606,31 @@ class WheelViewModel(
      * T17: Resumes practice from a previously-interrupted session.
      *
      * Restores the in-memory counters and `startedAt` so the timer keeps counting
-     * from the original start. Deletes the prior DB record (it is being replaced
-     * by the in-flight resumed session, which will be re-persisted on the next
-     * endSession/onCleared). Re-enters active session state, restarts the
-     * notification service and session timer.
+     * from the original start, and adopts the saved row's session key. The row
+     * and its lifetime contribution are KEPT: the next save of this session
+     * (End Session, onCleared/SessionSaveWorker, or checkpoint recovery) upserts
+     * by key, replacing the row in place — debit old, credit new, update row —
+     * in one transaction. (Previously the row was deleted and debited up
+     * front, so a process death after resuming lost a persisted session.)
+     *
+     * A live session with rotations is saved first instead of being
+     * overwritten by the restored state.
      *
      * Does NOT restore transient physics state (angularVelocity, drag history).
      */
     fun resumeFromSession(session: Session) {
+        if (sessionStartTime != null && currentSessionRotations > 0L && pendingDedicationSession == null) {
+            recordLiveSessionWithoutPrompt()
+        }
         viewModelScope.launch {
-            // Drop the prior record so it isn't double-counted when the resumed
-            // session is later saved. The in-memory state below replaces it.
-            // Also roll back this session's contribution from lifetime_stats — without
-            // this, the resumed session's mantras get double-counted: once when the
-            // original was saved, again when updateLifetimeStats() runs at the resumed
-            // session's end. updateLifetimeStats() re-adds the full accumulated total.
-            if (session.id != 0L) {
-                durableWrite("resumed session") { ledgerDao.deleteSessionAndDebit(session.id) }
-            }
+            val key = if (session.id != 0L) {
+                durableWrite("resumed session") {
+                    ledgerDao.ensureSessionKey(session.id, java.util.UUID.randomUUID().toString())
+                }
+            } else null
+            // Row gone (deleted meanwhile) or the write failed: continue under a
+            // key of its own; the save will then insert it as a new session.
+            sessionKey = key ?: session.sessionKey ?: java.util.UUID.randomUUID().toString()
 
             // Mirror startSessionIfNeeded() restoration, but preserve the
             // accumulated rotations/start time instead of zeroing them.
@@ -1534,7 +1660,21 @@ class WheelViewModel(
             // timeGoalReached flag is pre-set when the resumed session already
             // meets the goal so we don't immediately fire the milestone haptic.
             startSessionTimer(session.startedAt, skipGoalIfAlreadyMet = true)
+            startCheckpointing()
+            checkpointNow()
         }
+    }
+
+    /**
+     * Saves the live session as-is (no dedication prompt) and clears it.
+     * Used when something else must take over the live-session slot.
+     */
+    private fun recordLiveSessionWithoutPrompt() {
+        val session = createSessionFromCurrentState() ?: return
+        val durationSeconds = _sessionDurationSeconds.value
+        sessionKey = null
+        resetSessionState()
+        viewModelScope.launch { recordCompletedSession(session, durationSeconds) }
     }
 
     /**
@@ -1551,8 +1691,11 @@ class WheelViewModel(
                 // Save the session to Room
                 val endedAt = System.currentTimeMillis()
                 val session = createSessionFromPending(pending, endedAt, dedication)
+                val durationSeconds = _sessionDurationSeconds.value
+                sessionKey = null // handed off: no further checkpoints for it
+                stopCheckpointing()
 
-                recordCompletedSession(session)
+                recordCompletedSession(session, durationSeconds)
             }
 
             pendingDedicationSession = null
@@ -1568,7 +1711,10 @@ class WheelViewModel(
         viewModelScope.launch {
             pendingDedicationSession?.let { pending ->
                 val session = createSessionFromPending(pending, System.currentTimeMillis(), null)
-                recordCompletedSession(session)
+                val durationSeconds = _sessionDurationSeconds.value
+                sessionKey = null // handed off: no further checkpoints for it
+                stopCheckpointing()
+                recordCompletedSession(session, durationSeconds)
             }
             pendingDedicationSession = null
             _showDedicationPrompt.value = false
@@ -1595,7 +1741,8 @@ class WheelViewModel(
             intention = pending.intention,
             sessionGoal = pending.sessionGoal,
             wheelId = pending.wheelId,
-            label = pendingSessionLabel
+            label = pendingSessionLabel,
+            sessionKey = pending.sessionKey
         )
     }
 
@@ -1624,7 +1771,8 @@ class WheelViewModel(
             intention = _currentIntention.value.ifBlank { null },
             sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null,
             wheelId = _currentWheelId.value,
-            label = pendingSessionLabel
+            label = pendingSessionLabel,
+            sessionKey = sessionKey
         )
     }
 
@@ -1634,11 +1782,11 @@ class WheelViewModel(
      * bail before achievements/milestone updates so a write failure does not
      * produce a misleading tier bump based on stale in-memory state.
      */
-    private suspend fun recordCompletedSession(session: Session) {
-        // Duration is the live session timer (_sessionDurationSeconds), not endedAt - startedAt.
-        val sessionDurationSeconds = _sessionDurationSeconds.value
+    private suspend fun recordCompletedSession(session: Session, durationSeconds: Long) {
+        // Duration is the live session timer, not endedAt - startedAt. Upserts by
+        // session key and clears the session's checkpoint in the same transaction.
         val recorded = durableWrite("session") {
-            ledgerDao.recordSession(session, sessionDurationSeconds)
+            checkpointMutex.withLock { ledgerDao.recordSession(session, durationSeconds) }
         } ?: return
         checkAchievements(recorded.stats.totalMantras)
         updateHighestMilestoneTier(recorded.stats.totalMantras)
@@ -1648,6 +1796,7 @@ class WheelViewModel(
         val now = System.currentTimeMillis()
         if (SessionRules.needsNewSession(sessionStartTime)) {
             sessionStartTime = now
+            sessionKey = java.util.UUID.randomUUID().toString()
             currentSessionRotations = 0L
             currentSessionMantras = BigInteger.ZERO
             _hasActiveSession.value = true
@@ -1672,6 +1821,7 @@ class WheelViewModel(
 
             // Start session timer
             startSessionTimer(now, skipGoalIfAlreadyMet = false)
+            startCheckpointing()
         }
     }
 
@@ -1946,6 +2096,7 @@ class WheelViewModel(
 
         // Store pending session data for dedication prompt
         pendingDedicationSession = PendingSession(
+            sessionKey = sessionKey,
             startTime = startTime,
             rotations = currentSessionRotations,
             mantras = currentSessionMantras,
@@ -1969,7 +2120,8 @@ class WheelViewModel(
         sessionStartTime = null
         currentSessionRotations = 0L
         currentSessionMantras = BigInteger.ZERO
-        sessionId = null
+        sessionKey = null
+        stopCheckpointing()
         _rotationCount.value = 0L
         _sessionMantras.value = BigInteger.ZERO
         _hasActiveSession.value = false
@@ -2158,6 +2310,11 @@ class WheelViewModel(
 
     fun setAppInForeground(inForeground: Boolean) {
         _isAppInForeground.value = inForeground
+        if (!inForeground) {
+            // Backgrounded apps are the ones the OS kills: persist the live
+            // session right away instead of waiting for the next periodic tick.
+            checkpointNow()
+        }
     }
 
     fun startSessionFromWidget() {
@@ -2229,10 +2386,16 @@ class WheelViewModel(
         // WorkManager (not GlobalScope) survives process death, so the session
         // is not lost if the app is killed mid-write. dedication=null because
         // no UI context is available here; user can edit in History.
+        //
+        // The checkpoint for this session stays until the worker (or the next
+        // launch's recovery) records it; both upsert by sessionKey, so whichever
+        // runs second is a no-op or a newer-snapshot replace — never a double count.
         val snapshot = createSessionFromCurrentState()
+        sessionKey = null // stop any in-flight checkpoint write for this session
         if (snapshot != null) {
             SessionSaveWorker.enqueue(
                 context = appContext,
+                sessionKey = snapshot.sessionKey,
                 startedAt = snapshot.startedAt,
                 rotations = snapshot.rotationCount,
                 mantrasPerRotation = snapshot.mantrasPerRotation,

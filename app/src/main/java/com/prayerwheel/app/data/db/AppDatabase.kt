@@ -6,6 +6,7 @@ import androidx.room.TypeConverters
 import com.prayerwheel.app.data.db.dao.LedgerDao
 import com.prayerwheel.app.data.db.dao.LifetimeStatsDao
 import com.prayerwheel.app.data.db.dao.SessionDao
+import com.prayerwheel.app.data.model.ActiveSessionCheckpoint
 import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.data.model.Session
 
@@ -21,9 +22,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [
         Session::class,
-        LifetimeStats::class
+        LifetimeStats::class,
+        ActiveSessionCheckpoint::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 @TypeConverters(Converters::class)

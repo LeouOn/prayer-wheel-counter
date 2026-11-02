@@ -57,6 +57,7 @@ class SessionSaveWorker(
         val wheelId = inputData.getString(KEY_WHEEL_ID)?.takeIf { it.isNotBlank() }
         val label = inputData.getString(KEY_LABEL)?.takeIf { it.isNotBlank() }
         val sessionDurationSeconds = inputData.getLong(KEY_SESSION_DURATION_SECONDS, 0L)
+        val sessionKey = inputData.getString(KEY_SESSION_KEY)?.takeIf { it.isNotBlank() }
 
         val session = Session(
             startedAt = startedAt,
@@ -73,16 +74,19 @@ class SessionSaveWorker(
             intention = intention,
             sessionGoal = sessionGoal,
             wheelId = wheelId,
-            label = label
+            label = label,
+            sessionKey = sessionKey
         )
 
         val database = (applicationContext as PrayerWheelApp).database
 
         try {
-            // One Room transaction for insert + lifetime credit: a crash between
-            // them can't leave a row without its credit, and a failed run leaves
-            // nothing inserted, so retries are safe. Duration is the VM's live
-            // timer value passed in via input data.
+            // One Room transaction for insert + lifetime credit + checkpoint
+            // clear: a crash between them can't leave a row without its credit,
+            // and a failed run leaves nothing inserted, so retries are safe.
+            // Upsert by sessionKey makes a race with checkpoint recovery (or a
+            // second run) a no-op instead of a duplicate. Duration is the VM's
+            // live timer value passed in via input data.
             database.ledgerDao().recordSession(session, sessionDurationSeconds)
         } catch (e: android.database.sqlite.SQLiteFullException) {
             // Disk full — WorkManager's default retry policy would spin forever.
@@ -99,9 +103,12 @@ class SessionSaveWorker(
     }
 
     companion object {
-        // Unique work name: prevents double-insertion if onCleared fires
-        // repeatedly (e.g. process death + relaunch race, or rapid force-stops).
-        const val UNIQUE_WORK_NAME = "session_save_on_clear"
+        // Unique work per session key (dedupe of the same session is done by
+        // the sessionKey upsert; a shared name with KEEP would silently drop a
+        // second, different session while the first was still queued).
+        const val UNIQUE_WORK_PREFIX = "session_save_on_clear_"
+        const val WORK_TAG = "session_save_on_clear"
+        const val KEY_SESSION_KEY = "session_key"
 
         const val KEY_STARTED_AT = "started_at"
         const val KEY_ENDED_AT = "ended_at"
@@ -122,15 +129,14 @@ class SessionSaveWorker(
 
         /** Cancels a queued (not yet run) session save, e.g. before "Reset All Data". */
         fun cancel(context: Context) {
-            WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_WORK_NAME)
+            WorkManager.getInstance(context).cancelAllWorkByTag(WORK_TAG)
         }
 
         /**
          * Builds the [androidx.work.OneTimeWorkRequest] for saving the in-flight
-         * session and enqueues it as unique work with [ExistingWorkPolicy.KEEP]
-         * under [UNIQUE_WORK_NAME]. KEEP (rather than REPLACE) ensures that once
-         * a save has completed, a second `onCleared`/relaunch race does not
-         * re-execute the work and insert a duplicate session.
+         * session and enqueues it as unique work (per [sessionKey]) with
+         * [ExistingWorkPolicy.KEEP]. Re-running is harmless anyway: the save
+         * upserts by [sessionKey].
          *
          * @return `true` if work was enqueued; `false` if there is no session to
          *   save ([startedAt] is null or [rotations] is 0, matching the previous
@@ -138,6 +144,7 @@ class SessionSaveWorker(
          */
         fun enqueue(
             context: Context,
+            sessionKey: String?,
             startedAt: Long?,
             rotations: Long,
             mantrasPerRotation: Long,
@@ -168,15 +175,20 @@ class SessionSaveWorker(
                 KEY_SESSION_GOAL to (sessionGoal ?: -1L),
                 KEY_WHEEL_ID to (wheelId ?: ""),
                 KEY_LABEL to (label ?: ""),
-                KEY_SESSION_DURATION_SECONDS to sessionDurationSeconds
+                KEY_SESSION_DURATION_SECONDS to sessionDurationSeconds,
+                KEY_SESSION_KEY to (sessionKey ?: "")
             )
 
             val request = OneTimeWorkRequestBuilder<SessionSaveWorker>()
                 .setInputData(data)
+                .addTag(WORK_TAG)
                 .build()
 
-            WorkManager.getInstance(context)
-                .enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.KEEP, request)
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                UNIQUE_WORK_PREFIX + (sessionKey ?: startedAt.toString()),
+                ExistingWorkPolicy.KEEP,
+                request
+            )
 
             return true
         }

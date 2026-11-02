@@ -1,5 +1,6 @@
 package com.prayerwheel.app.data.stats
 
+import com.prayerwheel.app.data.model.ActiveSessionCheckpoint
 import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.data.model.Session
 import java.math.BigInteger
@@ -17,41 +18,123 @@ interface SessionLedgerStore {
     suspend fun deleteStats()
 
     suspend fun getSessionById(id: Long): Session?
+    suspend fun getSessionByKey(key: String): Session?
     suspend fun insertSession(session: Session): Long
     suspend fun updateSession(session: Session)
     suspend fun deleteSessionById(id: Long)
     suspend fun deleteAllSessions()
+
+    suspend fun getCheckpoints(): List<ActiveSessionCheckpoint>
+    suspend fun upsertCheckpoint(checkpoint: ActiveSessionCheckpoint)
+    suspend fun deleteCheckpointByKey(key: String)
+    suspend fun deleteAllCheckpoints()
 }
 
 /**
  * The only code that writes the `sessions` table together with the singleton
- * `lifetime_stats` row. Each operation is a read-modify-write across both
- * tables; callers MUST invoke these through a single database transaction so
- * a crash, a concurrent writer (VM, SessionSaveWorker, Settings reset) or a
- * cancelled coroutine can never leave a session row without its lifetime
- * contribution (or vice versa).
+ * `lifetime_stats` row (and the `active_session` checkpoint). Each operation
+ * is a read-modify-write across tables; callers MUST invoke these through a
+ * single database transaction so a crash, a concurrent writer (VM,
+ * SessionSaveWorker, Settings reset) or a cancelled coroutine can never leave
+ * a session row without its lifetime contribution (or vice versa).
  */
 object SessionLedger {
 
-    /** Result of a write: the persisted session (with its row id) and the new lifetime row. */
-    data class Recorded(val session: Session, val stats: LifetimeStats)
+    /**
+     * Result of a write: the persisted session (with its row id) and the
+     * lifetime row after the write. [changed] is false when the write was a
+     * no-op (an older/equal snapshot of an already-recorded session).
+     */
+    data class Recorded(val session: Session, val stats: LifetimeStats, val changed: Boolean = true)
 
-    /** Inserts a new completed session and credits it to lifetime stats. */
+    private val EMPTY_STATS = LifetimeStats(
+        id = 1,
+        totalRotations = 0L,
+        totalMantras = BigInteger.ZERO,
+        sessionsCompleted = 0L,
+        firstSessionAt = null,
+        totalSpinningTimeSeconds = 0L,
+        averageSessionDurationSeconds = 0L
+    )
+
+    /**
+     * Records a completed session and credits it to lifetime stats.
+     *
+     * Sessions with a [Session.sessionKey] are upserted by key, so the same
+     * live session arriving from several writers (VM save, SessionSaveWorker
+     * after `onCleared`, checkpoint recovery, a resumed session being saved
+     * again) is counted exactly once:
+     *  - no row with that key → insert + credit;
+     *  - a row exists and [session] is a newer snapshot (more rotations, or
+     *    same rotations and later end) → replace the row in place: debit the
+     *    old row, credit the new one (net effect: only the delta is added);
+     *  - otherwise (older or identical snapshot) → no-op.
+     *
+     * Always clears the `active_session` checkpoint for that key.
+     */
     suspend fun recordSession(store: SessionLedgerStore, session: Session, durationSeconds: Long): Recorded {
+        val key = session.sessionKey
+        val existing = key?.let { store.getSessionByKey(it) }
+        val result = when {
+            existing == null -> insertAndCredit(store, session, durationSeconds)
+            isNewerSnapshot(session, existing) -> replaceInPlace(store, existing, session, durationSeconds)
+            else -> Recorded(existing, store.getStats() ?: EMPTY_STATS, changed = false)
+        }
+        if (key != null) store.deleteCheckpointByKey(key)
+        return result
+    }
+
+    /**
+     * Whether [incoming] supersedes [existing] for the same session key. Counts
+     * only ever grow within one session, so more rotations wins; with equal
+     * rotations a later end wins (it may carry a dedication or longer time).
+     */
+    fun isNewerSnapshot(incoming: Session, existing: Session): Boolean =
+        incoming.rotationCount > existing.rotationCount ||
+            (incoming.rotationCount == existing.rotationCount &&
+                (incoming.endedAt ?: incoming.startedAt) > (existing.endedAt ?: existing.startedAt))
+
+    private suspend fun insertAndCredit(store: SessionLedgerStore, session: Session, durationSeconds: Long): Recorded {
         val id = store.insertSession(session.copy(id = 0))
         val stats = LifetimeStatsMath.plusSession(store.getStats(), session, durationSeconds)
         store.upsertStats(stats)
         return Recorded(session.copy(id = id), stats)
     }
 
+    private suspend fun replaceInPlace(
+        store: SessionLedgerStore,
+        old: Session,
+        replacement: Session,
+        durationSeconds: Long
+    ): Recorded {
+        val debited = store.getStats()?.let {
+            LifetimeStatsMath.minusSession(it, old, LifetimeStatsMath.storedDurationSeconds(old))
+        }
+        val stats = LifetimeStatsMath.plusSession(debited, replacement, durationSeconds)
+        // User-entered fields edited on the stored row survive a snapshot
+        // that doesn't carry them.
+        val updated = replacement.copy(
+            id = old.id,
+            sessionKey = old.sessionKey ?: replacement.sessionKey,
+            dedication = replacement.dedication ?: old.dedication,
+            label = replacement.label ?: old.label
+        )
+        store.updateSession(updated)
+        store.upsertStats(stats)
+        return Recorded(updated, stats)
+    }
+
     /**
      * Deletes the session row [id] and debits it from lifetime stats.
      * Returns the deleted row (for undo), or null if it no longer exists —
      * in which case nothing is debited, so a double delete cannot subtract twice.
+     * Also drops any checkpoint for the same key so a stale checkpoint can't
+     * resurrect the deleted session on the next launch.
      */
     suspend fun deleteSessionAndDebit(store: SessionLedgerStore, id: Long): Session? {
         val existing = store.getSessionById(id) ?: return null
         store.deleteSessionById(id)
+        existing.sessionKey?.let { store.deleteCheckpointByKey(it) }
         store.getStats()?.let { stats ->
             store.upsertStats(
                 LifetimeStatsMath.minusSession(stats, existing, LifetimeStatsMath.storedDurationSeconds(existing))
@@ -62,11 +145,12 @@ object SessionLedger {
 
     /**
      * Undo of [deleteSessionAndDebit]: re-inserts [session] under its original
-     * id and credits it again. No-op (returns null) if a row with that id
-     * already exists, so a double undo cannot credit twice.
+     * id and credits it again. No-op (returns null) if a row with that id or
+     * session key already exists, so a double undo cannot credit twice.
      */
     suspend fun restoreSession(store: SessionLedgerStore, session: Session): Recorded? {
         if (session.id != 0L && store.getSessionById(session.id) != null) return null
+        if (session.sessionKey != null && store.getSessionByKey(session.sessionKey) != null) return null
         val id = store.insertSession(session)
         val stats = LifetimeStatsMath.plusSession(
             store.getStats(), session, LifetimeStatsMath.storedDurationSeconds(session)
@@ -88,35 +172,50 @@ object SessionLedger {
         durationSeconds: Long
     ): Recorded {
         val old = store.getSessionById(oldId)
-            ?: return recordSession(store, replacement, durationSeconds)
-        val debited = store.getStats()?.let {
-            LifetimeStatsMath.minusSession(it, old, LifetimeStatsMath.storedDurationSeconds(old))
-        }
-        val stats = LifetimeStatsMath.plusSession(debited, replacement, durationSeconds)
-        val updated = replacement.copy(id = old.id)
-        store.updateSession(updated)
-        store.upsertStats(stats)
-        return Recorded(updated, stats)
+            ?: return insertAndCredit(store, replacement, durationSeconds)
+        return replaceInPlace(store, old, replacement, durationSeconds)
     }
+
+    /**
+     * Returns the stable session key of row [id], assigning [newKey] first if
+     * the row predates session keys. Null if the row no longer exists.
+     * Used when resuming a saved session so its next save replaces the row.
+     */
+    suspend fun ensureSessionKey(store: SessionLedgerStore, id: Long, newKey: String): String? {
+        val row = store.getSessionById(id) ?: return null
+        row.sessionKey?.let { return it }
+        store.updateSession(row.copy(sessionKey = newKey))
+        return newKey
+    }
+
+    /**
+     * Records every leftover `active_session` checkpoint (the app died while a
+     * session was live) as a completed session with no dedication, crediting
+     * the live-timer duration it carried, and clears them. Upserting by key
+     * makes this safe to race with SessionSaveWorker or to run twice.
+     * Returns only the writes that changed something.
+     */
+    suspend fun recoverCheckpoints(store: SessionLedgerStore): List<Recorded> =
+        store.getCheckpoints().mapNotNull { checkpoint ->
+            if (checkpoint.rotationCount <= 0L) {
+                store.deleteCheckpointByKey(checkpoint.sessionKey)
+                null
+            } else {
+                recordSession(store, checkpoint.toSession(), checkpoint.durationSeconds)
+                    .takeIf { it.changed }
+            }
+        }
 
     /** Zeroes lifetime counters, keeping every session row. */
     suspend fun resetLifetime(store: SessionLedgerStore): LifetimeStats {
-        val zero = LifetimeStats(
-            id = 1,
-            totalRotations = 0L,
-            totalMantras = BigInteger.ZERO,
-            sessionsCompleted = 0L,
-            firstSessionAt = null,
-            totalSpinningTimeSeconds = 0L,
-            averageSessionDurationSeconds = 0L
-        )
-        store.upsertStats(zero)
-        return zero
+        store.upsertStats(EMPTY_STATS)
+        return EMPTY_STATS
     }
 
-    /** Deletes every session and the lifetime row. */
+    /** Deletes every session, the lifetime row and any live-session checkpoint. */
     suspend fun resetAll(store: SessionLedgerStore) {
         store.deleteAllSessions()
         store.deleteStats()
+        store.deleteAllCheckpoints()
     }
 }

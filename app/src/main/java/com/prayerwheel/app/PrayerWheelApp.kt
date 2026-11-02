@@ -13,6 +13,7 @@ import androidx.room.Room
 import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.data.db.AppDatabase
 import com.prayerwheel.app.data.db.MIGRATION_3_4
+import com.prayerwheel.app.data.db.MIGRATION_4_5
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,7 +57,7 @@ class PrayerWheelApp : Application() {
             AppDatabase::class.java,
             "prayer_wheel_database"
         )
-            .addMigrations(AppDatabase.MIGRATION_2_3, MIGRATION_3_4)
+            .addMigrations(AppDatabase.MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1)
             .build()
 

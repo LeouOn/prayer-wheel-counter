@@ -91,4 +91,5 @@ dependencies {
     // JVM unit tests
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)
+    testImplementation(libs.org.json)
 }
