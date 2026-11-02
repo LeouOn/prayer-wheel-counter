@@ -1517,9 +1517,26 @@ class WheelViewModel(
      * Deletes a prayer wheel session and updates lifetime stats accordingly (without downgrading achievements).
      */
     fun deleteSession(session: Session) {
-        viewModelScope.launch {
-            durableWrite("deletion") { ledgerDao.deleteSessionAndDebit(session.id) }
+        if (SessionRules.isDeletingLiveSession(session.sessionKey, sessionKey)) {
+            // The user is deleting the session they resumed: it goes entirely,
+            // including rotations since the resume (never credited yet).
+            discardLiveSessionOnly()
         }
+        if (_resumableSession.value?.id == session.id) _resumableSession.value = null
+        viewModelScope.launch {
+            durableWrite("deletion") {
+                checkpointMutex.withLock { ledgerDao.deleteSessionAndDebit(session.id) }
+            }
+        }
+    }
+
+    /** Drops the live session without saving it (a pending dedication is left alone). */
+    private fun discardLiveSessionOnly() {
+        sessionStopJob?.cancel()
+        sessionStopJob = null
+        stopPhysicsLoop()
+        _angularVelocity.value = 0f
+        resetSessionState()
     }
 
     /**

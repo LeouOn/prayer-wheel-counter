@@ -132,6 +132,15 @@ object SessionRules {
     fun canOfferResume(offeredKey: String?, liveKey: String?, hasLiveSession: Boolean): Boolean =
         !hasLiveSession && (offeredKey == null || offeredKey != liveKey)
 
+    /**
+     * Whether deleting the saved row with [rowKey] deletes the session that is
+     * live right now (it was resumed). The live session must then be discarded
+     * too; otherwise its next save re-inserts the row and re-credits the
+     * counts the delete just debited.
+     */
+    fun isDeletingLiveSession(rowKey: String?, liveKey: String?): Boolean =
+        rowKey != null && rowKey == liveKey
+
     /** Local hour-of-day (0..23) of [epochMillis] in [zone]. */
     fun hourOfDay(epochMillis: Long, zone: ZoneId): Int =
         Instant.ofEpochMilli(epochMillis).atZone(zone).hour

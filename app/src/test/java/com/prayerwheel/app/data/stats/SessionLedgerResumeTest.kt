@@ -80,6 +80,22 @@ class SessionLedgerResumeTest {
     }
 
     @Test
+    fun deletingTheLiveResumedRow_mustDiscardTheLiveSession() = runBlocking {
+        // Resumed R (key K, 10 rot); user deletes R in History while still spinning.
+        val r = SessionLedger.recordSession(store, session(10, t0 + 60_000), 60, TEST_NOW).session
+        assertTrue(SessionRules.isDeletingLiveSession(r.sessionKey, liveKey = "K"))
+        SessionLedger.deleteSessionAndDebit(store, r.id)
+        assertEquals(BigInteger.ZERO, store.stats!!.totalMantras)
+        // Had the live session been kept, its next save (10 + 5) would re-insert
+        // and re-credit the deleted 10 rotations:
+        SessionLedger.recordSession(store, session(15, t0 + 120_000), 120, TEST_NOW)
+        assertEquals(BigInteger.valueOf(1_500), store.stats!!.totalMantras)
+        // ...which is why the VM discards it. Other rows are unaffected by the rule:
+        assertFalse(SessionRules.isDeletingLiveSession("other", liveKey = "K"))
+        assertFalse(SessionRules.isDeletingLiveSession(null, liveKey = null))
+    }
+
+    @Test
     fun offerGuard_neverWhileLive_neverForTheLiveKey() {
         assertTrue(SessionRules.canOfferResume("K", null, hasLiveSession = false))
         assertTrue(SessionRules.canOfferResume(null, null, hasLiveSession = false))
