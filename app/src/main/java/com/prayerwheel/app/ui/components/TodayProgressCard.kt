@@ -50,6 +50,8 @@ fun TodayProgressCard(
     currentIntention: String,
     numberFormatStyle: com.prayerwheel.app.data.datastore.NumberFormatStyle =
         com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD,
+    numberNotation: com.prayerwheel.app.data.datastore.NumberNotation =
+        com.prayerwheel.app.data.datastore.NumberNotation.STANDARD,
     dailyMantraGoal: Long = 0L,
     dailyMantraProgress: Float = 0f,
     dailyTimeGoalSeconds: Long = 0L,
@@ -112,7 +114,7 @@ fun TodayProgressCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            val formattedMantras = NumberFormatter.formatWithStyle(todayMantraCount, numberFormatStyle)
+            val formattedMantras = NumberFormatter.formatWithStyle(todayMantraCount, numberFormatStyle, numberNotation)
             val practiceLabel = formatPracticeTime(todayPracticeSeconds)
             Text(
                 text = "Today: $formattedMantras mantras  ·  $practiceLabel",

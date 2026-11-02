@@ -21,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.Locale
-import kotlin.math.log10
 
 @Composable
 internal fun StatRow(
@@ -77,28 +76,6 @@ internal fun formatClockTime(hour: Int, minute: Int): String {
         else -> hour
     }
     return String.format(Locale.getDefault(), "%d:%02d %s", displayHour, minute, amPm)
-}
-
-internal fun formatMergeThreshold(ms: Long): String {
-    val seconds = (ms / 1000).coerceAtLeast(1L)
-    return formatDuration(seconds)
-}
-
-private val MERGE_THRESHOLD_MIN_MS = 1_000L
-private val MERGE_THRESHOLD_MAX_MS = 600_000L
-
-internal fun thresholdMsToSlider(ms: Long): Float {
-    val lMin = log10(MERGE_THRESHOLD_MIN_MS.toDouble())
-    val lMax = log10(MERGE_THRESHOLD_MAX_MS.toDouble())
-    val lVal = log10(ms.coerceIn(MERGE_THRESHOLD_MIN_MS, MERGE_THRESHOLD_MAX_MS).toDouble())
-    return ((lVal - lMin) / (lMax - lMin)).toFloat()
-}
-
-internal fun sliderToThresholdMs(sliderPos: Float): Long {
-    val lMin = log10(MERGE_THRESHOLD_MIN_MS.toDouble())
-    val lMax = log10(MERGE_THRESHOLD_MAX_MS.toDouble())
-    val lVal = lMin + sliderPos.coerceIn(0f, 1f) * (lMax - lMin)
-    return Math.pow(10.0, lVal).toLong()
 }
 
 /**

@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.room.Room
+import com.prayerwheel.app.data.datastore.RetiredPreferencesMigration
 import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.data.db.AppDatabase
 import com.prayerwheel.app.data.db.MIGRATION_3_4
@@ -28,7 +29,8 @@ import kotlinx.coroutines.SupervisorJob
  */
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
     name = "user_preferences",
-    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+    produceMigrations = { listOf(RetiredPreferencesMigration) }
 )
 
 /**

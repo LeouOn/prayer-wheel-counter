@@ -39,7 +39,7 @@ A devotional Android app that counts mantra recitations through physical prayer 
 
 ### Settings
 - Theme: system/light/dark/sepia/dawn-dusk
-- Number format: standard (K/M/B/T), exact (with commas), scientific, long-form
+- Number format: standard (K/M/B/T), exact (with commas), scientific, long-form; notation beyond trillions (Qa, Qi… or aa, ab…)
 - Haptics: rotation ticks, milestone pulses, configurable intensity
 - Time goals: session and daily practice targets
 - Audio: synthesized singing bowl at milestones, RPM-following ambient drone

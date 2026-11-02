@@ -9,7 +9,8 @@
 - **Data integrity — fixed on this branch**: a bug that discarded rotations from active sessions on every flick, session loss on process death, non-atomic lifetime writes, a `SUM()` overflow crash, broken Android 12+ backup, and unbounded destructive migration (§4).
 - **Year/day boundaries (Dec 31 → Jan 1) — fixed**: date-picker day/year shift, calendar streak, stale "today" card, alarms after time-zone change, late end-of-day summary.
 - **Maintainability**: god files split, pure logic extracted, 0 → 177 unit tests (§6).
-- **Not yet done**: on-device smoke test, the compileSdk 37 dependency wave, and four product decisions (see "Decisions needed").
+- **Decided 2026-11-02**: merge threshold and dead settings removed, Number Notation wired up, SPEC updated to the as-built tone (see "Decisions").
+- **Not yet done**: on-device smoke test, the compileSdk 37 dependency wave, and the breath-mode background question.
 
 ## 1. Planned vs. built
 
@@ -43,15 +44,17 @@ All tasks done (commits c636af6…f77444a); the plan's checkboxes were never tic
 
 ### Built but in no plan
 
-Home widget, foreground session notification, WorkManager session save, morning/evening/end-of-day reminders, saved named wheels, 5 view modes + dual-wheel view, calendar heat map with streaks, manual "Log Practice", cosmic/yuga comparisons, monastery calculator, today-progress card with goals, wheel mass / merge threshold / auto-label settings, je-nyer rejoicing, Share Intention / Send Light.
+Home widget, foreground session notification, WorkManager session save, morning/evening/end-of-day reminders, saved named wheels, 5 view modes + dual-wheel view, calendar heat map with streaks, manual "Log Practice", cosmic/yuga comparisons, monastery calculator, today-progress card with goals, wheel mass / auto-label settings, je-nyer rejoicing, Share Intention / Send Light.
 
 ## 2. Dead settings and UI
 
-Settings that are stored but read by nothing: **Direction**, **Recitation** + **Recitation Volume**, **Ambient Volume**, **Milestone notifications**, **Number Notation**. `jeNyerEnabled` has a preference but no UI. Export CSV / Export JSON / Backup all open the same screen.
+Resolved: **Direction**, **Recitation** + **Recitation Volume**, **Ambient Volume**, **Milestone notifications** and **Session merge threshold** were removed from Settings and `UserPreferences`; a DataStore migration (`RetiredPreferencesMigration`) deletes their stored values on upgrade. **Number Notation** was kept and now applies to the wheel-screen counter and today card (STANDARD continues Qa, Qi… after T; EXTENDED continues aa, ab…).
 
-## 3. Tone (SPEC §11) deviations
+Still open: `jeNyerEnabled` has a preference but no UI. Export CSV / Export JSON / Backup all open the same screen.
 
-No exclamation points or "Awesome" — good. But: emoji in UI (✨ 🪷 🙏 🌬), gamified wording on the achievements screen ("Unlocked", "Reward:", "n / 10"), streak counters on the calendar, a social share flow — each contradicts SPEC §11 / README's "no achievement badges, no streak-shaming". Either the spec evolved (update the docs) or the UI should be pared back. **Decision needed.**
+## 3. Tone (SPEC §11)
+
+Resolved by updating the spec rather than the UI: SPEC §11 now allows quiet milestones (with "Unlocked / Reward / n of 10" labels), practice-day runs shown as plain facts, user-initiated "Send Light" sharing, and a small set of devotional emoji. Celebratory emoji, prompts to share and any run-breaking warnings remain out.
 
 ## 4. Correctness & data integrity
 
@@ -109,12 +112,12 @@ Still open:
 
 Deferred: unifying the 6 copy-pasted gesture handlers and divergent glow copies (visual change), merging formatters that only look alike, splitting the single ViewModel, DI, Robolectric/instrumented Room tests.
 
-## Decisions needed
+## Decisions
 
-1. **Session merge threshold** setting no longer does anything (it only "worked" through the session-wipe bug). Remove it, or implement real merging (re-open the last saved session if the next spin is within the threshold)?
-2. **Dead settings** — Direction, Recitation (+volume), Ambient Volume, Milestone notifications, Number Notation: remove, hide, or implement?
-3. **Tone** — emoji (✨ 🪷 🙏 🌬), "Unlocked / Reward", streak counters, Send Light sharing vs. SPEC §11. Pare back the UI, or update the spec?
-4. **Breath mode** now stops when the app is backgrounded. If background breath spinning is wanted, it needs a `microphone` foreground service.
+1. **Session merge threshold** — removed (2026-11-02).
+2. **Dead settings** — removed, except Number Notation, which was implemented (2026-11-02).
+3. **Tone** — SPEC §2, §3.6, §10, §11 updated to match the app (2026-11-02).
+4. **Breath mode** (open) — stops when the app is backgrounded. If background breath spinning is wanted, it needs a `microphone` foreground service.
 
 ## 7. Ideas backlog for 2027 (not started)
 

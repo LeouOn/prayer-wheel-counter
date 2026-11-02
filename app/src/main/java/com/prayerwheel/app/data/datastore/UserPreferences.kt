@@ -35,15 +35,10 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         val HAPTIC_ENABLED = booleanPreferencesKey("haptic_enabled")
         val CUSTOM_DEDICATION = stringPreferencesKey("custom_dedication")
         val HAS_COMPLETED_ONBOARDING = booleanPreferencesKey("has_completed_onboarding")
-        val CLOCKWISE_DIRECTION = booleanPreferencesKey("clockwise_direction")
-        val RECITATION_ENABLED = booleanPreferencesKey("recitation_enabled")
-        val RECITATION_VOLUME = floatPreferencesKey("recitation_volume")
         val BELL_AT_MILESTONES = booleanPreferencesKey("bell_at_milestones")
         val AMBIENT_ENABLED = booleanPreferencesKey("ambient_enabled")
-        val AMBIENT_VOLUME = floatPreferencesKey("ambient_volume")
         val MASTER_VOLUME = floatPreferencesKey("master_volume")
         val SHOW_COUNTER = booleanPreferencesKey("show_counter")
-        val MILESTONE_NOTIFICATIONS = booleanPreferencesKey("milestone_notifications")
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
         val COUNTER_CLOCKWISE_ENABLED = booleanPreferencesKey("counter_clockwise_enabled")
         val DAILY_MANTRA_GOAL = longPreferencesKey("daily_mantra_goal")
@@ -70,7 +65,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         val REMINDER_MORNING_MINUTE = intPreferencesKey("reminder_morning_minute")
         val REMINDER_EVENING_MINUTE = intPreferencesKey("reminder_evening_minute")
         val REMINDER_END_OF_DAY_MINUTE = intPreferencesKey("reminder_end_of_day_minute")
-        val SESSION_MERGE_THRESHOLD_MS = longPreferencesKey("session_merge_threshold_ms")
         val AUTO_LABEL_SESSIONS = booleanPreferencesKey("auto_label_sessions")
         val WHEEL_MASS = floatPreferencesKey("wheel_mass")
         val JE_NYER_ENABLED = booleanPreferencesKey("je_nyer_enabled")
@@ -119,18 +113,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         preferences[Keys.HAS_COMPLETED_ONBOARDING] ?: false
     }
 
-    val clockwiseDirection: Flow<Boolean> = dataStore.data.map { preferences ->
-        preferences[Keys.CLOCKWISE_DIRECTION] ?: true
-    }
-
-    val recitationEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
-        preferences[Keys.RECITATION_ENABLED] ?: false
-    }
-
-    val recitationVolume: Flow<Float> = dataStore.data.map { preferences ->
-        preferences[Keys.RECITATION_VOLUME] ?: 0.5f
-    }
-
     val bellAtMilestones: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[Keys.BELL_AT_MILESTONES] ?: false
     }
@@ -139,20 +121,12 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         preferences[Keys.AMBIENT_ENABLED] ?: false
     }
 
-    val ambientVolume: Flow<Float> = dataStore.data.map { preferences ->
-        preferences[Keys.AMBIENT_VOLUME] ?: 0.5f
-    }
-
     val masterVolume: Flow<Float> = dataStore.data.map { preferences ->
         preferences[Keys.MASTER_VOLUME] ?: 1.0f
     }
 
     val showCounter: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[Keys.SHOW_COUNTER] ?: true
-    }
-
-    val milestoneNotifications: Flow<Boolean> = dataStore.data.map { preferences ->
-        preferences[Keys.MILESTONE_NOTIFICATIONS] ?: true
     }
 
     val keepScreenOn: Flow<Boolean> = dataStore.data.map { preferences ->
@@ -284,10 +258,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         preferences[Keys.REMINDER_END_OF_DAY_MINUTE] ?: 30
     }
 
-    val sessionMergeThresholdMs: Flow<Long> = dataStore.data.map { preferences ->
-        preferences[Keys.SESSION_MERGE_THRESHOLD_MS] ?: 300000L
-    }
-
     val autoLabelSessions: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[Keys.AUTO_LABEL_SESSIONS] ?: true
     }
@@ -376,24 +346,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    suspend fun setClockwiseDirection(clockwise: Boolean) {
-        dataStore.edit { preferences ->
-            preferences[Keys.CLOCKWISE_DIRECTION] = clockwise
-        }
-    }
-
-    suspend fun setRecitationEnabled(enabled: Boolean) {
-        dataStore.edit { preferences ->
-            preferences[Keys.RECITATION_ENABLED] = enabled
-        }
-    }
-
-    suspend fun setRecitationVolume(volume: Float) {
-        dataStore.edit { preferences ->
-            preferences[Keys.RECITATION_VOLUME] = volume.coerceIn(0f, 1f)
-        }
-    }
-
     suspend fun setBellAtMilestones(enabled: Boolean) {
         dataStore.edit { preferences ->
             preferences[Keys.BELL_AT_MILESTONES] = enabled
@@ -406,12 +358,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    suspend fun setAmbientVolume(volume: Float) {
-        dataStore.edit { preferences ->
-            preferences[Keys.AMBIENT_VOLUME] = volume.coerceIn(0f, 1f)
-        }
-    }
-
     suspend fun setMasterVolume(volume: Float) {
         dataStore.edit { preferences ->
             preferences[Keys.MASTER_VOLUME] = volume.coerceIn(0f, 1f)
@@ -421,12 +367,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
     suspend fun setShowCounter(show: Boolean) {
         dataStore.edit { preferences ->
             preferences[Keys.SHOW_COUNTER] = show
-        }
-    }
-
-    suspend fun setMilestoneNotifications(enabled: Boolean) {
-        dataStore.edit { preferences ->
-            preferences[Keys.MILESTONE_NOTIFICATIONS] = enabled
         }
     }
 
@@ -620,12 +560,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
     suspend fun setReminderEndOfDayMinute(minute: Int) {
         dataStore.edit { preferences ->
             preferences[Keys.REMINDER_END_OF_DAY_MINUTE] = minute.coerceIn(0, 59)
-        }
-    }
-
-    suspend fun setSessionMergeThresholdMs(thresholdMs: Long) {
-        dataStore.edit { preferences ->
-            preferences[Keys.SESSION_MERGE_THRESHOLD_MS] = thresholdMs.coerceAtLeast(0L)
         }
     }
 

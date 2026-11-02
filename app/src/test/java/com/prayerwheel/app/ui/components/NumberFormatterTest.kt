@@ -100,4 +100,21 @@ class NumberFormatterTest {
         // so it is shown as "0.0001%" rather than "< 0.0001%".
         assertEquals("0.0001%", NumberFormatter.formatPercent(BigInteger.ONE, BigInteger.valueOf(2_000_000)))
     }
+
+    @Test
+    fun formatWithStyle_notationOnlyChangesSuffixesAboveTrillion() {
+        val std = com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD
+        val ext = com.prayerwheel.app.data.datastore.NumberNotation.EXTENDED
+        assertEquals("1.00T", NumberFormatter.formatWithStyle(big("1000000000000"), std, ext))
+        assertEquals("1.00Qa", NumberFormatter.formatWithStyle(big("1000000000000000"), std))
+        assertEquals("1.00aa", NumberFormatter.formatWithStyle(big("1000000000000000"), std, ext))
+        assertEquals("1.00ab", NumberFormatter.formatWithStyle(big("1000000000000000000"), std, ext))
+    }
+
+    @Test
+    fun formatWithStyle_notationIgnoredForNonStandardStyles() {
+        val exact = com.prayerwheel.app.data.datastore.NumberFormatStyle.EXACT
+        val ext = com.prayerwheel.app.data.datastore.NumberNotation.EXTENDED
+        assertEquals("1,000,000,000,000,000", NumberFormatter.formatWithStyle(big("1000000000000000"), exact, ext))
+    }
 }

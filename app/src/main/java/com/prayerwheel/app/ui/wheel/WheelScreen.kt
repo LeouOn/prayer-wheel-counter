@@ -147,6 +147,7 @@ fun WheelScreen(
     val counterClockwiseEnabled by viewModel.counterClockwiseEnabled.collectAsState()
     val viewMode by viewModel.viewMode.collectAsState()
     val numberFormatStyle by viewModel.numberFormatStyle.collectAsState()
+    val numberNotation by viewModel.numberNotation.collectAsState()
     val starParticles by viewModel.starParticles.collectAsState()
     val showLiveCounter by viewModel.showLiveCounter.collectAsState()
     val keepScreenOn by viewModel.keepScreenOn.collectAsState()
@@ -709,6 +710,7 @@ else {
                     todayPracticeSeconds = todayPracticeSeconds,
                     currentIntention = currentIntention,
                     numberFormatStyle = numberFormatStyle,
+                    numberNotation = numberNotation,
                     dailyMantraGoal = dailyMantraGoal,
                     dailyMantraProgress = dailyMantraProgress,
                     dailyTimeGoalSeconds = dailyTimeGoalSeconds,
@@ -781,6 +783,7 @@ else {
                         currentRpm = currentRpm,
                         isSpinning = isSpinning,
                         formatStyle = numberFormatStyle,
+                        notation = numberNotation,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

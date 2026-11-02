@@ -77,9 +77,6 @@ import com.prayerwheel.app.ui.wheel.settings.SettingsSection
 import com.prayerwheel.app.ui.wheel.settings.StatRow
 import com.prayerwheel.app.ui.wheel.settings.formatClockTime
 import com.prayerwheel.app.ui.wheel.settings.formatDuration
-import com.prayerwheel.app.ui.wheel.settings.formatMergeThreshold
-import com.prayerwheel.app.ui.wheel.settings.sliderToThresholdMs
-import com.prayerwheel.app.ui.wheel.settings.thresholdMsToSlider
 import com.prayerwheel.app.viewmodel.WheelViewModel
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
@@ -110,15 +107,10 @@ fun SettingsScreen(
     val mantrasPerRotation by userPreferences.mantrasPerRotation.collectAsState(initial = 1)
     val autoSpinRpm by userPreferences.autoSpinRpm.collectAsState(initial = 30)
     val friction by userPreferences.friction.collectAsState(initial = 0.97f)
-    val clockwiseDirection by userPreferences.clockwiseDirection.collectAsState(initial = true)
-    val recitationEnabled by userPreferences.recitationEnabled.collectAsState(initial = false)
-    val recitationVolume by userPreferences.recitationVolume.collectAsState(initial = 0.5f)
     val bellAtMilestones by userPreferences.bellAtMilestones.collectAsState(initial = false)
     val ambientEnabled by userPreferences.ambientEnabled.collectAsState(initial = false)
-    val ambientVolume by userPreferences.ambientVolume.collectAsState(initial = 0.5f)
     val masterVolume by userPreferences.masterVolume.collectAsState(initial = 1.0f)
     val showCounter by userPreferences.showCounter.collectAsState(initial = true)
-    val milestoneNotifications by userPreferences.milestoneNotifications.collectAsState(initial = true)
     val keepScreenOn by userPreferences.keepScreenOn.collectAsState(initial = false)
     val bgAnimationIntensity by userPreferences.bgAnimationIntensity.collectAsState(initial = UserPreferences.DEFAULT_BG_ANIMATION_INTENSITY)
     val counterClockwiseEnabled by userPreferences.counterClockwiseEnabled.collectAsState(initial = false)
@@ -129,7 +121,7 @@ fun SettingsScreen(
     val backgroundVibrationEnabled by userPreferences.backgroundVibrationEnabled.collectAsState(initial = false)
     val vibrationIntensity by userPreferences.vibrationIntensity.collectAsState(initial = 1.0f)
 
-    // Practice Rhythm bindings (reminders, merge threshold, labels, wheel mass)
+    // Practice Rhythm bindings (reminders, labels, wheel mass)
     val reminderMorningEnabled by userPreferences.reminderMorningEnabled.collectAsState(initial = false)
     val reminderMorningHour by userPreferences.reminderMorningHour.collectAsState(initial = 7)
     val reminderMorningMinute by userPreferences.reminderMorningMinute.collectAsState(initial = 0)
@@ -139,7 +131,6 @@ fun SettingsScreen(
     val reminderEndOfDayEnabled by userPreferences.reminderEndOfDayEnabled.collectAsState(initial = false)
     val reminderEndOfDayHour by userPreferences.reminderEndOfDayHour.collectAsState(initial = 21)
     val reminderEndOfDayMinute by userPreferences.reminderEndOfDayMinute.collectAsState(initial = 30)
-    val sessionMergeThresholdMs by userPreferences.sessionMergeThresholdMs.collectAsState(initial = 300000L)
     val autoLabelSessions by userPreferences.autoLabelSessions.collectAsState(initial = true)
     val wheelMass by userPreferences.wheelMass.collectAsState(initial = 1.0f)
 
@@ -309,19 +300,6 @@ fun SettingsScreen(
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
 
-                // Direction
-                ListItem(
-                    headlineContent = { Text("Direction") },
-                    supportingContent = { Text(if (clockwiseDirection) "Clockwise" else "Counter-clockwise") },
-                    trailingContent = {
-                        Switch(
-                            checked = clockwiseDirection,
-                            onCheckedChange = {
-                                scope.launch { userPreferences.setClockwiseDirection(it) }
-                            }
-                        )
-                    }
-                )
             }
 
             // INTERACTION SECTION
@@ -448,35 +426,6 @@ fun SettingsScreen(
                 expanded = audioExpanded,
                 onToggle = { audioExpanded = !audioExpanded }
             ) {
-                // Recitation
-                ListItem(
-                    headlineContent = { Text("Recitation") },
-                    trailingContent = {
-                        Switch(
-                            checked = recitationEnabled,
-                            onCheckedChange = {
-                                scope.launch { userPreferences.setRecitationEnabled(it) }
-                            }
-                        )
-                    }
-                )
-                if (recitationEnabled) {
-                    ListItem(
-                        headlineContent = { Text("Recitation Volume") },
-                        supportingContent = { Text("${(recitationVolume * 100).toInt()}%") }
-                    )
-                    Slider(
-                        value = recitationVolume,
-                        onValueChange = {
-                            scope.launch { userPreferences.setRecitationVolume(it) }
-                        },
-                        valueRange = 0f..1f,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                    )
-                }
-
                 // Bell at milestones
                 ListItem(
                     headlineContent = { Text("Bell at milestones") },
@@ -502,22 +451,6 @@ fun SettingsScreen(
                         )
                     }
                 )
-                if (ambientEnabled) {
-                    ListItem(
-                        headlineContent = { Text("Ambient Volume") },
-                        supportingContent = { Text("${(ambientVolume * 100).toInt()}%") }
-                    )
-                    Slider(
-                        value = ambientVolume,
-                        onValueChange = {
-                            scope.launch { userPreferences.setAmbientVolume(it) }
-                        },
-                        valueRange = 0f..1f,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                    )
-                }
 
                 // Master volume
                 ListItem(
@@ -597,18 +530,6 @@ fun SettingsScreen(
                         .padding(horizontal = 16.dp)
                 )
 
-                // Milestone notifications
-                ListItem(
-                    headlineContent = { Text("Milestone notifications") },
-                    trailingContent = {
-                        Switch(
-                            checked = milestoneNotifications,
-                            onCheckedChange = {
-                                scope.launch { userPreferences.setMilestoneNotifications(it) }
-                            }
-                        )
-                    }
-                )
             }
 
             // PRACTICE RHYTHM SECTION
@@ -735,32 +656,6 @@ fun SettingsScreen(
 
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
 
-                // Session merge threshold (log scale, 1s..10min)
-                ListItem(
-                    headlineContent = { Text("Session merge threshold") },
-                    supportingContent = { Text(formatMergeThreshold(sessionMergeThresholdMs)) }
-                )
-                Slider(
-                    value = thresholdMsToSlider(sessionMergeThresholdMs),
-                    onValueChange = { sliderPos ->
-                        scope.launch {
-                            userPreferences.setSessionMergeThresholdMs(sliderToThresholdMs(sliderPos))
-                        }
-                    },
-                    valueRange = 0f..1f,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                )
-                Text(
-                    text = "How long after a session ends before a new spin counts as a new session.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-
                 // Auto-label sessions toggle
                 ListItem(
                     headlineContent = { Text("Auto-label sessions") },
@@ -848,8 +743,8 @@ fun SettingsScreen(
                     supportingContent = { 
                         Text(
                             when (numberNotation) {
-                                com.prayerwheel.app.data.datastore.NumberNotation.STANDARD -> "Standard (K/M/B/T)"
-                                com.prayerwheel.app.data.datastore.NumberNotation.EXTENDED -> "Extended (aa/ab/ac...)"
+                                com.prayerwheel.app.data.datastore.NumberNotation.STANDARD -> "Standard: after T comes Qa, Qi, Sx…"
+                                com.prayerwheel.app.data.datastore.NumberNotation.EXTENDED -> "Extended: after T comes aa, ab, ac…"
                             }
                         )
                     },
