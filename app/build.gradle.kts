@@ -4,6 +4,19 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Release signing secrets come from Gradle properties (e.g. ~/.gradle/gradle.properties)
+// or environment variables of the same name. When any is missing, release builds
+// stay unsigned (app-release-unsigned.apk) so local/CI builds without secrets work.
+val releaseSigning: Map<String, String>? = listOf(
+    "PRAYERWHEEL_KEYSTORE_FILE",
+    "PRAYERWHEEL_KEYSTORE_PASSWORD",
+    "PRAYERWHEEL_KEY_ALIAS",
+    "PRAYERWHEEL_KEY_PASSWORD",
+).associateWith { name ->
+    providers.gradleProperty(name).orElse(providers.environmentVariable(name)).orNull
+}.takeIf { values -> values.values.none { it.isNullOrBlank() } }
+    ?.mapValues { it.value!! }
+
 android {
     namespace = "com.prayerwheel.app"
     compileSdk = 36
@@ -18,8 +31,22 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (releaseSigning != null) {
+            create("release") {
+                storeFile = file(releaseSigning.getValue("PRAYERWHEEL_KEYSTORE_FILE"))
+                storePassword = releaseSigning.getValue("PRAYERWHEEL_KEYSTORE_PASSWORD")
+                keyAlias = releaseSigning.getValue("PRAYERWHEEL_KEY_ALIAS")
+                keyPassword = releaseSigning.getValue("PRAYERWHEEL_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (releaseSigning != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
