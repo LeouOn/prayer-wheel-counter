@@ -77,15 +77,17 @@ internal fun PersonalCalculator(
     val mantrasPerWeek = remember(mantrasPerDay, daysPerWeek) {
         mantrasPerDay * BigInteger.valueOf(daysPerWeek.toLong())
     }
+    // All periods share one calendar basis (365.25-day year, see CalculatorMath),
+    // so 12 x per month == per year == the "1 Year" projection.
     val mantrasPerMonth = remember(mantrasPerWeek) {
-        mantrasPerWeek * BigInteger.valueOf(13).divide(BigInteger.valueOf(3))
+        mantrasPerMonthFromWeekly(mantrasPerWeek)
     }
     val mantrasPerYear = remember(mantrasPerWeek) {
-        mantrasPerWeek * BigInteger.valueOf(52)
+        mantrasPerYearFromWeekly(mantrasPerWeek)
     }
 
-    val projectedTotal = remember(mantrasPerMonth, selectedPeriod) {
-        mantrasPerMonth * BigInteger.valueOf(selectedPeriod.months.toLong())
+    val projectedTotal = remember(mantrasPerWeek, selectedPeriod) {
+        mantrasOverMonthsFromWeekly(mantrasPerWeek, selectedPeriod.months)
     }
     val totalRotations = remember(projectedTotal, mantrasPerRotation) {
         if (mantrasPerRotation > 0) {
@@ -345,7 +347,7 @@ internal fun PersonalCalculator(
                     .multiply(BigDecimal.valueOf(hoursPerDay.toDouble()))
                     .toBigInteger()
                 val verbalMantrasPerWeek = verbalMantrasPerDay * BigInteger.valueOf(daysPerWeek.toLong())
-                val verbalMantrasPerYear = verbalMantrasPerWeek * BigInteger.valueOf(52)
+                val verbalMantrasPerYear = mantrasPerYearFromWeekly(verbalMantrasPerWeek)
                 val combinedPerHour = mantrasPerHour + verbalMantrasPerHour
                 val combinedPerYear = mantrasPerYear + verbalMantrasPerYear
 
