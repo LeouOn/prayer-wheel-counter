@@ -86,29 +86,23 @@ class SessionRulesTest {
 
     @Test
     fun needsNewSession_noActiveSession_isTrue() {
-        assertTrue(SessionRules.needsNewSession(null, null, now, window))
-        assertTrue(SessionRules.needsNewSession(null, now, now, window))
+        assertTrue(SessionRules.needsNewSession(null))
     }
 
     @Test
-    fun needsNewSession_activeAndNoPriorEnd_isFalse() {
-        assertFalse(SessionRules.needsNewSession(now - 1_000_000, null, now, window))
+    fun needsNewSession_activeSession_isFalse() {
+        assertFalse(SessionRules.needsNewSession(now - 1_000_000))
+        assertFalse(SessionRules.needsNewSession(now))
     }
 
     @Test
-    fun needsNewSession_mergeThresholdEdge() {
-        assertFalse(SessionRules.needsNewSession(now - 1_000, now - window, now, window))
-        assertTrue(SessionRules.needsNewSession(now - 1_000, now - window - 1, now, window))
-    }
-
-    @Test
-    fun currentBehavior_needsNewSession_activeSessionResetOnceLastEndIsStale() {
-        // Session A was dedicated at T0; session B started at T0+1min and is still active.
-        // Once T0 is more than the merge threshold in the past, every call reports true,
-        // so the VM re-initializes (zeroes) the in-progress session B on the next flick.
+    fun needsNewSession_activeSessionNeverResetAfterEarlierDedicatedSession() {
+        // Regression: session A was dedicated at T0; session B started at T0+1min and
+        // is still active. Long after T0 (beyond any merge threshold) further flicks
+        // must keep accumulating into B instead of zeroing it.
         val t0 = now - 6 * 60_000L
         val activeStart = t0 + 60_000L
-        assertTrue(SessionRules.needsNewSession(activeStart, t0, now, window))
+        assertFalse(SessionRules.needsNewSession(activeStart))
     }
 
     // ── autoLabel / isMorning ──────────────────────────────────────────

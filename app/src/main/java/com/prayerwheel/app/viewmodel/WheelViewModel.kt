@@ -537,12 +537,10 @@ class WheelViewModel(
     private var currentSessionRotations = 0L
     private var currentSessionMantras = BigInteger.ZERO
     private var sessionId: Long? = null
-    private var lastSessionEndTime: Long? = null
     private var pendingDedicationSession: PendingSession? = null
-    private var sessionMergeThresholdMs: Long = SESSION_NEW_THRESHOLD_MS
 
     // T15: cached Flow values so the non-suspending session-start path can read them
-    // (same pattern as sessionMergeThresholdMs). pendingSessionLabel is consumed by
+    // (cached from preference flows). pendingSessionLabel is consumed by
     // createSessionFromPending / createSessionFromCurrentState.
     private var pendingSessionLabel: String? = null
     private var autoLabelSessionsEnabled: Boolean = true
@@ -569,11 +567,6 @@ class WheelViewModel(
         viewModelScope.launch {
             userPreferences.mantrasPerRotation.collect { value ->
                 _mantrasPerRotation.value = value
-            }
-        }
-        viewModelScope.launch {
-            userPreferences.sessionMergeThresholdMs.collect { value ->
-                sessionMergeThresholdMs = value
             }
         }
         viewModelScope.launch {
@@ -1539,8 +1532,6 @@ class WheelViewModel(
 
                 // Update lifetime stats (carrying forward spinning time fields)
                 updateLifetimeStats(session)
-
-                lastSessionEndTime = endedAt
             }
 
             pendingDedicationSession = null
@@ -1651,11 +1642,7 @@ class WheelViewModel(
 
     private fun startSessionIfNeeded() {
         val now = System.currentTimeMillis()
-        val needsNewSession = SessionRules.needsNewSession(
-            sessionStartTime, lastSessionEndTime, now, sessionMergeThresholdMs
-        )
-
-        if (needsNewSession) {
+        if (SessionRules.needsNewSession(sessionStartTime)) {
             sessionStartTime = now
             currentSessionRotations = 0L
             currentSessionMantras = BigInteger.ZERO
