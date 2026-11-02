@@ -78,4 +78,8 @@ dependencies {
 
     // WorkManager (background session save)
     implementation(libs.androidx.work.runtime.ktx)
+
+    // Unit tests
+    testImplementation(libs.junit)
+    testImplementation(libs.coroutines.test)
 }
