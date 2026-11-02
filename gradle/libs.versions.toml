@@ -1,17 +1,17 @@
 [versions]
 agp = "9.2.1"
-kotlin = "2.2.10"
+kotlin = "2.4.21"
 ksp = "2.3.13"
-compose-bom = "2024.12.01"
-lifecycle = "2.8.7"
-room = "2.7.0"
-datastore = "1.1.1"
-coroutines = "1.9.0"
+compose-bom = "2025.11.01"
+lifecycle = "2.9.4"
+room = "2.8.5"
+datastore = "1.3.0"
+coroutines = "1.11.0"
 navigation = "2.8.5"
-activity-compose = "1.9.3"
-core-ktx = "1.15.0"
-glance = "1.1.1"
-work-runtime = "2.10.0"
+activity-compose = "1.13.0"
+core-ktx = "1.18.0"
+glance = "1.2.0"
+work-runtime = "2.12.0"
 
 [libraries]
 # AndroidX Core
@@ -25,6 +25,7 @@ compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
 compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
 
 # Lifecycle
 lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
