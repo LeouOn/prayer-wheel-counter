@@ -10,8 +10,8 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.prayerwheel.app.PrayerWheelApp
-import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.data.model.Session
+import com.prayerwheel.app.data.stats.LifetimeStatsMath
 import java.math.BigInteger
 
 /**
@@ -28,7 +28,8 @@ import java.math.BigInteger
  * saved with `dedication = null`. The user can edit/add a dedication later from
  * the History screen.
  *
- * The lifetime-stats update mirrors `WheelViewModel.updateLifetimeStats`:
+ * The lifetime-stats update uses the same [LifetimeStatsMath.plusSession] as
+ * `WheelViewModel.updateLifetimeStats`:
  * `totalSpinningTimeSeconds` and `averageSessionDurationSeconds` are carried
  * forward (the bug fixed in T5 — where every live rotation clobbered those
  * fields — must not regress via this code path).
@@ -93,26 +94,8 @@ class SessionSaveWorker(
                 sessionDao.insert(session)
 
                 val existing = lifetimeStatsDao.getStats()
-                val newStats = existing?.copy(
-                    totalRotations = existing.totalRotations + session.rotationCount,
-                    totalMantras = existing.totalMantras + session.totalMantras,
-                    sessionsCompleted = existing.sessionsCompleted + 1,
-                    totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
-                    averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                        (existing.totalSpinningTimeSeconds + sessionDurationSeconds) /
-                            (existing.sessionsCompleted + 1)
-                    } else {
-                        sessionDurationSeconds
-                    }
-                ) ?: LifetimeStats(
-                    id = 1,
-                    totalRotations = session.rotationCount,
-                    totalMantras = session.totalMantras,
-                    sessionsCompleted = 1,
-                    firstSessionAt = session.startedAt,
-                    totalSpinningTimeSeconds = sessionDurationSeconds,
-                    averageSessionDurationSeconds = sessionDurationSeconds
-                )
+                // Duration is the VM's live timer value passed in via input data.
+                val newStats = LifetimeStatsMath.plusSession(existing, session, sessionDurationSeconds)
                 lifetimeStatsDao.upsert(newStats)
             }
         } catch (e: android.database.sqlite.SQLiteFullException) {

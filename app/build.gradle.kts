@@ -82,4 +82,8 @@ dependencies {
 
     // WorkManager (background session save)
     implementation(libs.androidx.work.runtime.ktx)
+
+    // JVM unit tests
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlin.test.junit)
 }
