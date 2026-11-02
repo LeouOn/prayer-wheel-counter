@@ -14,22 +14,17 @@ import java.math.BigInteger
 import java.util.Calendar
 
 /**
- * Receiver for the end-of-day summary alarm and for [Intent.ACTION_BOOT_COMPLETED].
+ * Receiver for the end-of-day summary alarm.
  *
- * Two responsibilities, both self-contained and independent of T7
- * (ReminderScheduler / ReminderReceiver / BootReceiver):
+ * Not exported: it is only ever fired by this app's own explicit
+ * [android.app.PendingIntent] from [EndOfDayScheduler]. Re-arming after boot,
+ * clock or time-zone changes is handled by [BootReceiver].
  *
- * 1. **Boot**: after a reboot, re-arm the end-of-day alarm from persisted
- *    preferences so end-of-day summaries survive restarts independently.
- *    T7's [com.prayerwheel.app.notification.BootReceiver] does the same for its
- *    own alarms; the two registrations do not collide because Android allows
- *    multiple receivers for the same system action.
- *
- * 2. **End-of-day fire**: if the user practiced today, post ONE quiet,
- *    auto-dismissable summary notification. If the user did NOT practice,
- *    stay completely silent — no nagging, no streak-shaming. After firing
- *    (whether or not a notification was posted), reschedule the next day's
- *    alarm so the reminder never silently dies.
+ * On fire: if the user practiced that day, post ONE quiet, auto-dismissable
+ * summary notification. If the user did NOT practice, stay completely
+ * silent — no nagging, no streak-shaming. After firing (whether or not a
+ * notification was posted), reschedule the next day's alarm so the reminder
+ * never silently dies.
  *
  * Tone follows the project's no-gamification voice: no "streak", no "missed",
  * no "broken", no exclamation points.
@@ -40,33 +35,22 @@ class EndOfDayReceiver : BroadcastReceiver() {
         if (context == null || intent == null) return
         val action = intent.action ?: return
 
-        // Both branches below read from DataStore / Room. Run them off the main
-        // thread via goAsync plus a short, time-bounded coroutine so a cold
-        // DataStore read after boot cannot cause an ANR.
-        runAsync(TAG) {
-            when (action) {
-                Intent.ACTION_BOOT_COMPLETED -> {
-                    runCatching {
-                        EndOfDayScheduler.rescheduleFromPreferences(context)
-                    }.onFailure { e ->
-                        Log.e(TAG, "Failed to reschedule end-of-day alarm on boot", e)
-                    }
-                }
+        if (action != EndOfDayScheduler.ACTION_END_OF_DAY_SUMMARY) return
 
-                EndOfDayScheduler.ACTION_END_OF_DAY_SUMMARY -> {
-                    runCatching {
-                        handleEndOfDaySummary(context)
-                    }.onFailure { e ->
-                        Log.e(TAG, "Failed to handle end-of-day summary", e)
-                    }
-                    // Always re-arm tomorrow, even if this fire failed or the user
-                    // did not practice, so the reminder never silently disappears.
-                    runCatching {
-                        EndOfDayScheduler.rescheduleFromPreferences(context)
-                    }.onFailure { e ->
-                        Log.e(TAG, "Failed to reschedule next end-of-day alarm", e)
-                    }
-                }
+        // Reads from DataStore / Room. Run off the main thread via goAsync plus
+        // a short, time-bounded coroutine so a cold read cannot cause an ANR.
+        runAsync(TAG) {
+            runCatching {
+                handleEndOfDaySummary(context)
+            }.onFailure { e ->
+                Log.e(TAG, "Failed to handle end-of-day summary", e)
+            }
+            // Always re-arm tomorrow, even if this fire failed or the user
+            // did not practice, so the reminder never silently disappears.
+            runCatching {
+                EndOfDayScheduler.rescheduleFromPreferences(context)
+            }.onFailure { e ->
+                Log.e(TAG, "Failed to reschedule next end-of-day alarm", e)
             }
         }
     }

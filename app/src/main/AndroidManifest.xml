@@ -67,13 +67,11 @@
             </intent-filter>
         </receiver>
 
+        <!-- Fired only by the app's own explicit PendingIntent. Boot and
+             clock-change re-arming lives in BootReceiver. -->
         <receiver
             android:name=".notification.EndOfDayReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
+            android:exported="false" />
 
         <receiver
             android:name=".widget.PrayerWheelWidgetReceiver"
