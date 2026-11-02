@@ -740,10 +740,12 @@ class WheelViewModel(
             }
         }
         viewModelScope.launch {
-            userPreferences.breathModeEnabled.collect { enabled ->
+            // distinctUntilChanged: DataStore re-emits on ANY preference write,
+            // which used to restart the microphone (even in the background).
+            userPreferences.breathModeEnabled.distinctUntilChanged().collect { enabled ->
                 _breathModeEnabled.value = enabled
                 if (enabled) {
-                    breathModeController?.start()
+                    if (_isAppInForeground.value) breathModeController?.start()
                     startSessionIfNeeded()
                     startPhysicsLoop()
                 } else {
@@ -2281,10 +2283,16 @@ class WheelViewModel(
 
     fun setAppInForeground(inForeground: Boolean) {
         _isAppInForeground.value = inForeground
-        if (!inForeground) {
+        if (inForeground) {
+            // Breath mode still on: resume listening (idempotent).
+            if (_breathModeEnabled.value) breathModeController?.start()
+        } else {
             // Backgrounded apps are the ones the OS kills: persist the live
             // session right away instead of waiting for the next periodic tick.
             checkpointNow()
+            // No background microphone: API 34+ forbids it without a
+            // microphone-type foreground service, and it is a privacy issue.
+            breathModeController?.stop()
         }
     }
 
