@@ -55,7 +55,7 @@ internal fun GoalProgressDisplay(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Goal: ${formatNumber(current.toLong())} / ${formatNumber(goal.toLong())} mantras",
+                text = "Goal: ${formatNumber(current)} / ${formatNumber(goal)} mantras",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (isGoalReached) {
                     MaterialTheme.colorScheme.primary
@@ -100,7 +100,7 @@ internal fun GoalProgressDisplay(
 /**
  * Formats a BigInteger for display.
  */
-private fun formatNumber(number: Long, style: com.prayerwheel.app.data.datastore.NumberFormatStyle = com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD): String {
+private fun formatNumber(number: BigInteger, style: com.prayerwheel.app.data.datastore.NumberFormatStyle = com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD): String {
     return NumberFormatter.formatWithStyle(number, style)
 }
 

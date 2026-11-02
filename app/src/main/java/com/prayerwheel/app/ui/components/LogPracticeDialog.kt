@@ -340,7 +340,7 @@ fun LogPracticeDialog(
                     OutlinedTextField(
                         value = customRotationsText,
                         onValueChange = { newValue ->
-                            if (newValue.all { it.isDigit() }) {
+                            if (newValue.all { it.isDigit() } && newValue.length <= 12) {
                                 customRotationsText = newValue
                             }
                         },
