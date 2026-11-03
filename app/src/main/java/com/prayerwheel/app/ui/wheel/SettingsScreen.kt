@@ -28,8 +28,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -60,7 +58,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -71,19 +68,21 @@ import com.prayerwheel.app.data.datastore.NumberFormatStyle
 import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.data.db.dao.LifetimeStatsDao
 import com.prayerwheel.app.data.db.dao.SessionDao
-import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.notification.EndOfDayScheduler
 import com.prayerwheel.app.notification.ReminderScheduler
 import com.prayerwheel.app.ui.components.CapacitySlider
 import com.prayerwheel.app.ui.components.NumberFormatter
+import com.prayerwheel.app.ui.wheel.settings.ReminderSlot
+import com.prayerwheel.app.ui.wheel.settings.SettingsSection
+import com.prayerwheel.app.ui.wheel.settings.StatRow
+import com.prayerwheel.app.ui.wheel.settings.formatClockTime
+import com.prayerwheel.app.ui.wheel.settings.formatDuration
 import com.prayerwheel.app.viewmodel.WheelViewModel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.math.RoundingMode
 import java.util.Locale
-import kotlin.math.log10
 
 /**
  * Settings screen with all preference groups.
@@ -108,15 +107,10 @@ fun SettingsScreen(
     val mantrasPerRotation by userPreferences.mantrasPerRotation.collectAsState(initial = 1)
     val autoSpinRpm by userPreferences.autoSpinRpm.collectAsState(initial = 30)
     val friction by userPreferences.friction.collectAsState(initial = 0.97f)
-    val clockwiseDirection by userPreferences.clockwiseDirection.collectAsState(initial = true)
-    val recitationEnabled by userPreferences.recitationEnabled.collectAsState(initial = false)
-    val recitationVolume by userPreferences.recitationVolume.collectAsState(initial = 0.5f)
     val bellAtMilestones by userPreferences.bellAtMilestones.collectAsState(initial = false)
     val ambientEnabled by userPreferences.ambientEnabled.collectAsState(initial = false)
-    val ambientVolume by userPreferences.ambientVolume.collectAsState(initial = 0.5f)
     val masterVolume by userPreferences.masterVolume.collectAsState(initial = 1.0f)
     val showCounter by userPreferences.showCounter.collectAsState(initial = true)
-    val milestoneNotifications by userPreferences.milestoneNotifications.collectAsState(initial = true)
     val keepScreenOn by userPreferences.keepScreenOn.collectAsState(initial = false)
     val bgAnimationIntensity by userPreferences.bgAnimationIntensity.collectAsState(initial = UserPreferences.DEFAULT_BG_ANIMATION_INTENSITY)
     val counterClockwiseEnabled by userPreferences.counterClockwiseEnabled.collectAsState(initial = false)
@@ -127,7 +121,7 @@ fun SettingsScreen(
     val backgroundVibrationEnabled by userPreferences.backgroundVibrationEnabled.collectAsState(initial = false)
     val vibrationIntensity by userPreferences.vibrationIntensity.collectAsState(initial = 1.0f)
 
-    // Practice Rhythm bindings (reminders, merge threshold, labels, wheel mass)
+    // Practice Rhythm bindings (reminders, labels, wheel mass)
     val reminderMorningEnabled by userPreferences.reminderMorningEnabled.collectAsState(initial = false)
     val reminderMorningHour by userPreferences.reminderMorningHour.collectAsState(initial = 7)
     val reminderMorningMinute by userPreferences.reminderMorningMinute.collectAsState(initial = 0)
@@ -137,7 +131,6 @@ fun SettingsScreen(
     val reminderEndOfDayEnabled by userPreferences.reminderEndOfDayEnabled.collectAsState(initial = false)
     val reminderEndOfDayHour by userPreferences.reminderEndOfDayHour.collectAsState(initial = 21)
     val reminderEndOfDayMinute by userPreferences.reminderEndOfDayMinute.collectAsState(initial = 30)
-    val sessionMergeThresholdMs by userPreferences.sessionMergeThresholdMs.collectAsState(initial = 300000L)
     val autoLabelSessions by userPreferences.autoLabelSessions.collectAsState(initial = true)
     val wheelMass by userPreferences.wheelMass.collectAsState(initial = 1.0f)
 
@@ -307,19 +300,6 @@ fun SettingsScreen(
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
 
-                // Direction
-                ListItem(
-                    headlineContent = { Text("Direction") },
-                    supportingContent = { Text(if (clockwiseDirection) "Clockwise" else "Counter-clockwise") },
-                    trailingContent = {
-                        Switch(
-                            checked = clockwiseDirection,
-                            onCheckedChange = {
-                                scope.launch { userPreferences.setClockwiseDirection(it) }
-                            }
-                        )
-                    }
-                )
             }
 
             // INTERACTION SECTION
@@ -446,35 +426,6 @@ fun SettingsScreen(
                 expanded = audioExpanded,
                 onToggle = { audioExpanded = !audioExpanded }
             ) {
-                // Recitation
-                ListItem(
-                    headlineContent = { Text("Recitation") },
-                    trailingContent = {
-                        Switch(
-                            checked = recitationEnabled,
-                            onCheckedChange = {
-                                scope.launch { userPreferences.setRecitationEnabled(it) }
-                            }
-                        )
-                    }
-                )
-                if (recitationEnabled) {
-                    ListItem(
-                        headlineContent = { Text("Recitation Volume") },
-                        supportingContent = { Text("${(recitationVolume * 100).toInt()}%") }
-                    )
-                    Slider(
-                        value = recitationVolume,
-                        onValueChange = {
-                            scope.launch { userPreferences.setRecitationVolume(it) }
-                        },
-                        valueRange = 0f..1f,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                    )
-                }
-
                 // Bell at milestones
                 ListItem(
                     headlineContent = { Text("Bell at milestones") },
@@ -500,22 +451,6 @@ fun SettingsScreen(
                         )
                     }
                 )
-                if (ambientEnabled) {
-                    ListItem(
-                        headlineContent = { Text("Ambient Volume") },
-                        supportingContent = { Text("${(ambientVolume * 100).toInt()}%") }
-                    )
-                    Slider(
-                        value = ambientVolume,
-                        onValueChange = {
-                            scope.launch { userPreferences.setAmbientVolume(it) }
-                        },
-                        valueRange = 0f..1f,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                    )
-                }
 
                 // Master volume
                 ListItem(
@@ -595,18 +530,6 @@ fun SettingsScreen(
                         .padding(horizontal = 16.dp)
                 )
 
-                // Milestone notifications
-                ListItem(
-                    headlineContent = { Text("Milestone notifications") },
-                    trailingContent = {
-                        Switch(
-                            checked = milestoneNotifications,
-                            onCheckedChange = {
-                                scope.launch { userPreferences.setMilestoneNotifications(it) }
-                            }
-                        )
-                    }
-                )
             }
 
             // PRACTICE RHYTHM SECTION
@@ -733,32 +656,6 @@ fun SettingsScreen(
 
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
 
-                // Session merge threshold (log scale, 1s..10min)
-                ListItem(
-                    headlineContent = { Text("Session merge threshold") },
-                    supportingContent = { Text(formatMergeThreshold(sessionMergeThresholdMs)) }
-                )
-                Slider(
-                    value = thresholdMsToSlider(sessionMergeThresholdMs),
-                    onValueChange = { sliderPos ->
-                        scope.launch {
-                            userPreferences.setSessionMergeThresholdMs(sliderToThresholdMs(sliderPos))
-                        }
-                    },
-                    valueRange = 0f..1f,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                )
-                Text(
-                    text = "How long after a session ends before a new spin counts as a new session.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-
                 // Auto-label sessions toggle
                 ListItem(
                     headlineContent = { Text("Auto-label sessions") },
@@ -846,8 +743,8 @@ fun SettingsScreen(
                     supportingContent = { 
                         Text(
                             when (numberNotation) {
-                                com.prayerwheel.app.data.datastore.NumberNotation.STANDARD -> "Standard (K/M/B/T)"
-                                com.prayerwheel.app.data.datastore.NumberNotation.EXTENDED -> "Extended (aa/ab/ac...)"
+                                com.prayerwheel.app.data.datastore.NumberNotation.STANDARD -> "Standard: after T comes Qa, Qi, Sx…"
+                                com.prayerwheel.app.data.datastore.NumberNotation.EXTENDED -> "Extended: after T comes aa, ab, ac…"
                             }
                         )
                     },
@@ -1092,11 +989,10 @@ fun SettingsScreen(
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            scope.launch {
-                                userPreferences.clearAllData()
-                                sessionDao.deleteAll()
-                                lifetimeStatsDao.deleteAll()
-                            }
+                            // Runs in the VM/app scope (not this composable's scope)
+                            // so leaving Settings mid-reset can't half-reset, and the
+                            // live in-memory session is discarded too.
+                            viewModel.resetAllData()
                             showResetDialog = false
                         }
                     ) {
@@ -1285,132 +1181,6 @@ fun SettingsScreen(
                     TextButton(onClick = { showExactAlarmRationale = false }) { Text("Not now") }
                 }
             )
-        }
-    }
-}
-
-@Composable
-private fun StatRow(
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Medium
-        )
-    }
-}
-
-private fun formatDuration(seconds: Long): String {
-    return when {
-        seconds >= 86400 -> {
-            val days = seconds / 86400
-            val hrs = (seconds % 86400) / 3600
-            if (hrs > 0) String.format(Locale.getDefault(), "%dd %dh", days, hrs) else "${days}d"
-        }
-        seconds >= 3600 -> {
-            val hrs = seconds / 3600
-            val mins = (seconds % 3600) / 60
-            if (mins > 0) String.format(Locale.getDefault(), "%dh %dm", hrs, mins) else "${hrs}h"
-        }
-        seconds >= 60 -> {
-            val mins = seconds / 60
-            val secs = seconds % 60
-            if (secs > 0) String.format(Locale.getDefault(), "%dm %ds", mins, secs) else "${mins}m"
-        }
-        else -> "${seconds}s"
-    }
-}
-
-private enum class ReminderSlot { MORNING, EVENING, END_OF_DAY }
-
-private fun formatClockTime(hour: Int, minute: Int): String {
-    val amPm = if (hour < 12) "AM" else "PM"
-    val displayHour = when {
-        hour == 0 -> 12
-        hour > 12 -> hour - 12
-        else -> hour
-    }
-    return String.format(Locale.getDefault(), "%d:%02d %s", displayHour, minute, amPm)
-}
-
-private fun formatMergeThreshold(ms: Long): String {
-    val seconds = (ms / 1000).coerceAtLeast(1L)
-    return formatDuration(seconds)
-}
-
-private val MERGE_THRESHOLD_MIN_MS = 1_000L
-private val MERGE_THRESHOLD_MAX_MS = 600_000L
-
-private fun thresholdMsToSlider(ms: Long): Float {
-    val lMin = log10(MERGE_THRESHOLD_MIN_MS.toDouble())
-    val lMax = log10(MERGE_THRESHOLD_MAX_MS.toDouble())
-    val lVal = log10(ms.coerceIn(MERGE_THRESHOLD_MIN_MS, MERGE_THRESHOLD_MAX_MS).toDouble())
-    return ((lVal - lMin) / (lMax - lMin)).toFloat()
-}
-
-private fun sliderToThresholdMs(sliderPos: Float): Long {
-    val lMin = log10(MERGE_THRESHOLD_MIN_MS.toDouble())
-    val lMax = log10(MERGE_THRESHOLD_MAX_MS.toDouble())
-    val lVal = lMin + sliderPos.coerceIn(0f, 1f) * (lMax - lMin)
-    return Math.pow(10.0, lVal).toLong()
-}
-
-/**
- * Expandable settings section.
- */
-@Composable
-private fun SettingsSection(
-    title: String,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    content: @Composable () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
-    ) {
-        Column {
-            // Section header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onToggle() }
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = if (expanded) "Collapse" else "Expand"
-                )
-            }
-
-            // Section content
-            if (expanded) {
-                Column {
-                    content()
-                }
-            }
         }
     }
 }

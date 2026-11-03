@@ -25,8 +25,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontStyle
@@ -40,6 +38,7 @@ import com.prayerwheel.app.data.model.MantraStats
 import com.prayerwheel.app.data.model.Mantras
 import com.prayerwheel.app.data.model.Session
 import com.prayerwheel.app.ui.components.NumberFormatter
+import com.prayerwheel.app.ui.components.StatItem
 import java.math.BigInteger
 import java.time.Instant
 import java.time.ZoneId
@@ -348,7 +347,7 @@ private fun TimePeriodSummaryCard(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
                     Text(
-                        text = "${last7DaysStats?.sessionCount ?: 0} sessions, ${formatNumber(last7DaysStats?.totalMantras ?: 0L)} mantras",
+                        text = "${last7DaysStats?.sessionCount ?: 0} sessions, ${formatBigNumber(last7DaysStats?.totalMantras ?: BigInteger.ZERO)} mantras",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -369,7 +368,7 @@ private fun TimePeriodSummaryCard(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
                     Text(
-                        text = "${last30DaysStats?.sessionCount ?: 0} sessions, ${formatNumber(last30DaysStats?.totalMantras ?: 0L)} mantras",
+                        text = "${last30DaysStats?.sessionCount ?: 0} sessions, ${formatBigNumber(last30DaysStats?.totalMantras ?: BigInteger.ZERO)} mantras",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -390,7 +389,7 @@ private fun TimePeriodSummaryCard(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
                     Text(
-                        text = "${allTimeStats?.sessionCount ?: 0} sessions, ${formatNumber(allTimeStats?.totalMantras ?: 0L)} mantras",
+                        text = "${allTimeStats?.sessionCount ?: 0} sessions, ${formatBigNumber(allTimeStats?.totalMantras ?: BigInteger.ZERO)} mantras",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -476,32 +475,12 @@ private fun MantraStatsCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
                 Text(
-                    text = "${formatNumber(stats.totalMantras)} mantras",
+                    text = "${formatBigNumber(stats.totalMantras)} mantras",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
             }
         }
-    }
-}
-
-/**
- * Individual stat item.
- */
-@Composable
-private fun StatItem(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onPrimaryContainer
-        )
     }
 }
 
@@ -598,7 +577,7 @@ private fun WheelStatsCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
                 Text(
-                    text = "${formatNumber(stats.totalMantras)} mantras",
+                    text = "${formatBigNumber(stats.totalMantras)} mantras",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )

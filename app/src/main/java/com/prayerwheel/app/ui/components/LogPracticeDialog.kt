@@ -28,6 +28,10 @@ import com.prayerwheel.app.data.model.Mantras
 import com.prayerwheel.app.data.model.WheelSkins
 import com.prayerwheel.app.data.datastore.UserPreferences
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -89,21 +93,40 @@ fun LogPracticeDialog(
     }
 
     if (showDatePicker) {
+        // Material3 DatePicker works in UTC-midnight millis, independent of the
+        // device zone. Convert the selected local date to that form on the way
+        // in, and read the picked value back as a UTC date on the way out, so
+        // the chosen calendar day never shifts by one in zones away from UTC.
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = selectedDateTimestamp
+            initialSelectedDateMillis = minOf(
+                Instant.ofEpochMilli(selectedDateTimestamp)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate(),
+                LocalDate.now()
+            ).toUtcMidnightMillis(),
+            selectableDates = PastOrTodaySelectableDates
         )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        datePickerState.selectedDateMillis?.let {
-                            val customCal = Calendar.getInstance().apply { timeInMillis = it }
-                            val currentCal = Calendar.getInstance().apply { timeInMillis = selectedDateTimestamp }
-                            currentCal.set(Calendar.YEAR, customCal.get(Calendar.YEAR))
-                            currentCal.set(Calendar.MONTH, customCal.get(Calendar.MONTH))
-                            currentCal.set(Calendar.DAY_OF_MONTH, customCal.get(Calendar.DAY_OF_MONTH))
-                            selectedDateTimestamp = currentCal.timeInMillis
+                        datePickerState.selectedDateMillis?.let { utcMillis ->
+                            val zone = ZoneId.systemDefault()
+                            val pickedDate = Instant.ofEpochMilli(utcMillis)
+                                .atZone(ZoneOffset.UTC)
+                                .toLocalDate()
+                            // Keep the previously chosen local time of day.
+                            val timeOfDay = Instant.ofEpochMilli(selectedDateTimestamp)
+                                .atZone(zone)
+                                .toLocalTime()
+                            val combined = pickedDate.atTime(timeOfDay)
+                                .atZone(zone)
+                                .toInstant()
+                                .toEpochMilli()
+                            // Picking today with a later time of day would land
+                            // in the future; clamp to now.
+                            selectedDateTimestamp = minOf(combined, System.currentTimeMillis())
                         }
                         showDatePicker = false
                     }
@@ -317,7 +340,7 @@ fun LogPracticeDialog(
                     OutlinedTextField(
                         value = customRotationsText,
                         onValueChange = { newValue ->
-                            if (newValue.all { it.isDigit() }) {
+                            if (newValue.all { it.isDigit() } && newValue.length <= 12) {
                                 customRotationsText = newValue
                             }
                         },
@@ -441,4 +464,18 @@ fun LogPracticeDialog(
         },
         shape = RoundedCornerShape(16.dp)
     )
+}
+
+/** A local calendar date expressed as the UTC-midnight millis Material3 DatePicker expects. */
+private fun LocalDate.toUtcMidnightMillis(): Long =
+    atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+
+/** Allows picking any day up to and including today (device zone); no future days. */
+@OptIn(ExperimentalMaterial3Api::class)
+private object PastOrTodaySelectableDates : SelectableDates {
+    override fun isSelectableDate(utcTimeMillis: Long): Boolean =
+        utcTimeMillis <= LocalDate.now().toUtcMidnightMillis()
+
+    override fun isSelectableYear(year: Int): Boolean =
+        year <= LocalDate.now().year
 }

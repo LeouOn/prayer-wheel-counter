@@ -11,7 +11,9 @@ import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import com.prayerwheel.app.PrayerWheelApp
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Calendar
 
 /**
@@ -36,6 +38,13 @@ object EndOfDayScheduler {
 
     /** Custom fire action handled by [EndOfDayReceiver]. */
     const val ACTION_END_OF_DAY_SUMMARY = "com.prayerwheel.app.ACTION_END_OF_DAY_SUMMARY"
+
+    /**
+     * Local calendar day (as [LocalDate.toEpochDay]) the alarm was scheduled
+     * for. An inexact alarm can be delivered after midnight, so the receiver
+     * summarizes this day rather than whatever "today" is at delivery time.
+     */
+    const val EXTRA_TARGET_EPOCH_DAY = "com.prayerwheel.app.extra.TARGET_EPOCH_DAY"
 
     /** Distinct from T7's request codes (2000-2003). */
     private const val REQUEST_CODE_END_OF_DAY = 3000
@@ -79,7 +88,10 @@ object EndOfDayScheduler {
 
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val triggerAt = nextTriggerAt(hour, minute)
-        val pendingIntent = pendingIntent(context)
+        val targetDate = Instant.ofEpochMilli(triggerAt)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+        val pendingIntent = pendingIntent(context, targetDate)
 
         val exactAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             alarmManager.canScheduleExactAlarms()
@@ -110,26 +122,30 @@ object EndOfDayScheduler {
 
     /**
      * Read the end-of-day reminder preferences and either schedule or cancel
-     * the alarm to match. Safe to call from a BroadcastReceiver: the DataStore
-     * reads are local and fast, wrapped in [runBlocking].
+     * the alarm to match. Called from receivers inside a goAsync coroutine, so
+     * the DataStore reads suspend off the main thread.
      */
-    fun rescheduleFromPreferences(context: Context) {
+    suspend fun rescheduleFromPreferences(context: Context) {
         val prefs = (context.applicationContext as PrayerWheelApp).userPreferences
-        runBlocking {
-            val enabled = prefs.reminderEndOfDayEnabled.first()
-            if (!enabled) {
-                cancelEndOfDaySummary(context)
-                return@runBlocking
-            }
-            val hour = prefs.reminderEndOfDayHour.first()
-            val minute = prefs.reminderEndOfDayMinute.first()
-            scheduleEndOfDaySummary(context, hour, minute)
+        val enabled = prefs.reminderEndOfDayEnabled.first()
+        if (!enabled) {
+            cancelEndOfDaySummary(context)
+            return
         }
+        val hour = prefs.reminderEndOfDayHour.first()
+        val minute = prefs.reminderEndOfDayMinute.first()
+        scheduleEndOfDaySummary(context, hour, minute)
     }
 
-    private fun pendingIntent(context: Context): PendingIntent {
+    /**
+     * Extras are not part of PendingIntent identity, so a [targetDate]-less
+     * intent still matches (and cancels) a scheduled one; FLAG_UPDATE_CURRENT
+     * replaces the extra on reschedule.
+     */
+    private fun pendingIntent(context: Context, targetDate: LocalDate? = null): PendingIntent {
         val intent = Intent(context, EndOfDayReceiver::class.java).apply {
             action = ACTION_END_OF_DAY_SUMMARY
+            if (targetDate != null) putExtra(EXTRA_TARGET_EPOCH_DAY, targetDate.toEpochDay())
         }
         return PendingIntent.getBroadcast(
             context,

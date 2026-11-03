@@ -18,8 +18,10 @@ import com.prayerwheel.app.data.datastore.UserPreferences
 import com.prayerwheel.app.data.datastore.ViewMode
 import com.prayerwheel.app.data.datastore.NumberFormatStyle
 import com.prayerwheel.app.data.datastore.NumberNotation
+import com.prayerwheel.app.data.db.dao.LedgerDao
 import com.prayerwheel.app.data.db.dao.LifetimeStatsDao
 import com.prayerwheel.app.data.db.dao.SessionDao
+import com.prayerwheel.app.data.model.ActiveSessionCheckpoint
 import com.prayerwheel.app.data.model.LifetimeStats
 import com.prayerwheel.app.data.model.Mantra
 import com.prayerwheel.app.data.model.Mantras
@@ -27,16 +29,23 @@ import com.prayerwheel.app.data.model.SavedWheel
 import com.prayerwheel.app.data.model.WheelSkin
 import com.prayerwheel.app.data.model.WheelSkins
 import com.prayerwheel.app.data.model.Session
+import com.prayerwheel.app.data.stats.LifetimeStatsMath
 import com.prayerwheel.app.data.model.Achievement
-import com.prayerwheel.app.data.model.Achievements
 import com.prayerwheel.app.audio.AudioEngine
 import com.prayerwheel.app.audio.BreathModeController
 import com.prayerwheel.app.notification.SessionNotificationService
 import com.prayerwheel.app.notification.SessionNotificationReceiver
 import com.prayerwheel.app.widget.PrayerWheelWidget
 import com.prayerwheel.app.work.SessionSaveWorker
+import com.prayerwheel.app.viewmodel.haptics.HapticPatterns
+import com.prayerwheel.app.viewmodel.milestones.Milestones
+import com.prayerwheel.app.viewmodel.physics.SpinPhysics
+import com.prayerwheel.app.viewmodel.session.SessionRules
 import androidx.glance.appwidget.updateAll
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +54,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -55,12 +65,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.math.BigInteger
-import java.util.Calendar
-import java.util.TimeZone
-import kotlin.math.PI
+import java.time.ZoneId
 import kotlin.math.abs
 import kotlin.math.atan2
-import kotlin.math.sin
 
 /**
  * ViewModel for the prayer wheel screen.
@@ -72,64 +79,61 @@ import kotlin.math.sin
 class WheelViewModel(
     private val lifetimeStatsDao: LifetimeStatsDao,
     private val sessionDao: SessionDao,
+    private val ledgerDao: LedgerDao,
+    /** Process-lifetime scope: durable writes run here so VM teardown can't cancel them. */
+    private val appScope: CoroutineScope,
     private val userPreferences: UserPreferences,
     private val vibrator: Vibrator,
     private val appContext: Context
 ) : ViewModel() {
 
     companion object {
-        private const val FRICTION_COEFFICIENT = 0.008f
-        private const val TWO_HANDED_FRICTION = 0.0001f
-        private const val STOP_THRESHOLD = 0.001f
-        private const val TWO_PI = 2f * PI.toFloat()
+        private const val FRICTION_COEFFICIENT = SpinPhysics.FRICTION_COEFFICIENT
+        private const val STOP_THRESHOLD = SpinPhysics.STOP_THRESHOLD
         private const val SESSION_STOP_DELAY_MS = 30000L
         private const val SESSION_NEW_THRESHOLD_MS = 300000L // 5 minutes
         private const val ANIMATION_FRAME_TIME_MS = 16L
         private const val WIDGET_UPDATE_THROTTLE_MS = 1000L
-        // Reduced from 1.5f so flicks don't slam into the lowered velocity cap (12.566 rad/s).
-        // At 1.0f, a typical drag of ~8 rad/s reaches the cap cleanly without an invisible wall.
-        private const val FLICK_VELOCITY_MULTIPLIER = 1.0f
-        // 120 RPM × 2π/60 ≈ 12.566 rad/s — vigorous but meditative devotional cap.
-        // Real prayer wheels spin at 30-100 RPM; the previous 75f (~716 RPM) was frantic.
-        private const val MAX_ANGULAR_VELOCITY = 12.566f
         private const val COUNTER_CLOCKWISE_REMINDER_DELAY_MS = 3000L
-        private const val MIN_COUNTER_CLOCKWISE_VELOCITY = 3.0f // rad/s — below this, accidental flicks are ignored
         private const val COUNTER_CLOCKWISE_COOLDOWN_MS = 300_000L // 5 min between reminders
-
-        // Static friction: wheel halts cleanly below this angular velocity (rad/s) when no torque is applied.
-        private const val STATIC_FRICTION_THRESHOLD = 0.05f
-        // Weight→wheel coupling: restoring torque coefficient from sin(weightAngle); acts as extra friction at low speed.
-        private const val WEIGHT_COUPLING_COEFFICIENT = 0.03f
-        // Auto-spin ramp: max rad/s change per frame at the 60fps baseline (~0.5-1.5s ramp to a typical target RPM).
-        private const val AUTO_SPIN_MAX_ACCEL_PER_FRAME = 0.1f
-        // Wheel-mass scaling default. Drag angular change is divided by wheelMass so heavier wheels resist acceleration.
-        private const val WHEEL_MASS_DEFAULT = 1.0f
 
         // Haptic feedback durations in milliseconds
         private const val HAPTIC_PAUSE_DURATION = 50L
         private const val HAPTIC_SLIDER_DURATION = 3L
-        private const val HAPTIC_MILESTONE_DURATION = 20L
         private const val SESSION_TIMER_INTERVAL_MS = 1000L
+        private const val DAY_WINDOW_REFRESH_MS = 60_000L
+        /** How long Resume waits for a previous process's queued save of that session. */
+        private const val RESUME_WORKER_WAIT_MS = 10_000L
 
-        // Breath mode: angular acceleration (rad/s²) per unit of normalized mic
-        // amplitude. At steady breath (amp ≈ 0.3–0.5) the wheel settles around
-        // 30–60 RPM; a strong blow (amp ≈ 1.0) approaches the 120 RPM devotional
-        // cap. Tuned against FRICTION_COEFFICIENT so the steady-state velocity
-        // (BREATH_TORQUE × amp / μ) lands in that band.
-        private const val BREATH_TORQUE = 0.1f
-        // Below this normalized amplitude the breath input is treated as zero
-        // for the purposes of (a) keeping the physics loop alive and
-        // (b) bypassing static-friction snap-to-zero.
-        private const val BREATH_ACTIVE_THRESHOLD = 0.01f
+        // Breath-mode physics constants live in [SpinPhysics]; this alias keeps the
+        // physics-loop keep-alive condition readable.
+        private const val BREATH_ACTIVE_THRESHOLD = SpinPhysics.BREATH_ACTIVE_THRESHOLD
     }
 
     /**
-     * Serializes all lifetime_stats DB read-modify-write sequences. Without this,
-     * concurrent coroutines (session-end save, manual log, undo-delete, subtract
-     * on delete/resume) can read the same row, increment separately, and the
-     * loser's upsert clobbers the winner's increment — a silent lost update.
+     * Runs a ledger write in [appScope] and awaits it, so leaving the screen or
+     * clearing the VM cannot cancel a write half-way (the caller may be
+     * cancelled, the write is not). All session + lifetime_stats mutations go
+     * through [LedgerDao]'s `@Transaction` methods, which SQLite serializes
+     * with every other writer (SessionSaveWorker, resets) — replacing the old
+     * VM-only mutex that the worker and Settings reset could not see.
+     *
+     * Disk-full and other failures are surfaced via [saveError]; returns null
+     * on failure.
      */
-    private val lifetimeStatsMutex = Mutex()
+    private suspend fun <T> durableWrite(what: String, block: suspend () -> T): T? = try {
+        appScope.async { block() }.await()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: android.database.sqlite.SQLiteFullException) {
+        Log.e("WheelViewModel", "Disk full - $what not saved", e)
+        _saveError.value = "Storage is full. Unable to save session data. Please free up space."
+        null
+    } catch (e: Exception) {
+        Log.e("WheelViewModel", "Failed to save $what", e)
+        _saveError.value = "Unable to save $what. Please try again."
+        null
+    }
 
     /**
      * Procedural audio engine — singing bowl tones at lifetime milestones and an
@@ -144,22 +148,6 @@ class WheelViewModel(
      * Tied to [viewModelScope] so its IO coroutine is cancelled with the ViewModel.
      */
     private var breathModeController: BreathModeController? = null
-
-    /**
-     * Lifetime-mantra thresholds (1K → 1T) that trigger singing bowl tones.
-     * Index in this list = bowl tier (0 = deepest, 7 = brightest). Each entry
-     * mirrors the `mantrasRequired` of [Achievements.THOUSANDFOLD]…[Achievements.TRILLION].
-     */
-    private val audioMilestoneThresholds = listOf(
-        BigInteger.valueOf(1_000L),
-        BigInteger.valueOf(10_000L),
-        BigInteger.valueOf(100_000L),
-        BigInteger.valueOf(1_000_000L),
-        BigInteger.valueOf(10_000_000L),
-        BigInteger.valueOf(100_000_000L),
-        BigInteger.valueOf(1_000_000_000L),
-        BigInteger("1000000000000")
-    )
 
     /**
      * Current angular velocity in radians per second.
@@ -420,7 +408,7 @@ class WheelViewModel(
      * Highest lifetime-milestone tier the practitioner has crossed (0 = none,
      * 1 = 1K, … 8 = 1T). Drives the persistent aura floor: even at rest, a
      * practitioner with 1B+ lifetime mantras sees a gentle glow on their wheel.
-     * Indices align with [audioMilestoneThresholds] (tier = index + 1).
+     * Indices align with [Milestones.MILESTONE_THRESHOLDS] (tier = index + 1).
      */
     private val _highestMilestoneTier = MutableStateFlow(0)
     val highestMilestoneTier: StateFlow<Int> = _highestMilestoneTier.asStateFlow()
@@ -457,6 +445,19 @@ class WheelViewModel(
 
     fun dismissSaveError() {
         _saveError.value = null
+    }
+
+    /**
+     * T17 resume offer: the most recent interrupted session, computed once per
+     * ViewModel (after checkpoint recovery) and cleared when it is resumed,
+     * dismissed, or any session starts. Never re-derived from UI state.
+     */
+    private val _resumableSession = MutableStateFlow<Session?>(null)
+    val resumableSession: StateFlow<Session?> = _resumableSession.asStateFlow()
+    private var resumeInProgress = false
+
+    fun dismissResumeOffer() {
+        _resumableSession.value = null
     }
 
     private val _newlyUnlockedAchievement = MutableStateFlow<Achievement?>(null)
@@ -566,23 +567,62 @@ class WheelViewModel(
     }
 
     // RPM tracking state
-    private var rpmSamples = mutableListOf<Float>()
     private var rpmSampleCount = 0
     private var sessionStartRpmSum = 0f
 
     // Drag tracking
-    private val dragHistory = mutableListOf<DragEvent>()
+    private val dragHistory = mutableListOf<SpinPhysics.DragSample>()
     private var sessionStartTime: Long? = null
+
+    /**
+     * Base of the live session timer (duration = now − base). Equals
+     * [sessionStartTime] for a new session; for a resumed one it is set so the
+     * timer continues from the row's recorded duration (idle gap excluded).
+     */
+    private var sessionTimerBase: Long? = null
+
+    /**
+     * Capacity/mantra/wheel of the live session, fixed for its lifetime
+     * (captured at the first rotation, or restored from the row on resume).
+     * Changing the selection never re-prices counted rotations; see
+     * [onSelectedPricingChanged].
+     */
+    private var sessionPricing: SessionRules.SessionPricing? = null
+
+    private fun selectedPricing() = SessionRules.SessionPricing(
+        _mantrasPerRotation.value, _currentMantra.value.id, _currentWheelId.value
+    )
+
+    private fun livePricing(): SessionRules.SessionPricing =
+        sessionPricing ?: selectedPricing().also { sessionPricing = it }
     private var currentSessionRotations = 0L
     private var currentSessionMantras = BigInteger.ZERO
-    private var sessionId: Long? = null
-    private var lastSessionEndTime: Long? = null
+    /**
+     * Stable identity of the live session (UUID, or the key of the saved row
+     * being resumed). Copied into the checkpoint, the saved [Session] and the
+     * SessionSaveWorker input so every writer upserts the same row. Null when
+     * no session is live; cleared *before* a session is handed off for saving
+     * so a late checkpoint write for it is skipped.
+     */
+    private var sessionKey: String? = null
+
+    /** Periodic [ActiveSessionCheckpoint] writer for the live session. */
+    private var checkpointJob: Job? = null
+
+    /** Recovery of checkpoints left by a killed process; checkpoint writes wait for it. */
+    private var recoveryJob: Job? = null
+
+    /**
+     * Orders this VM's checkpoint writes against its session saves/resets, so
+     * a checkpoint can never be written after its session was saved (which
+     * would leave a stale checkpoint behind).
+     */
+    private val checkpointMutex = Mutex()
     private var pendingDedicationSession: PendingSession? = null
-    private var sessionMergeThresholdMs: Long = SESSION_NEW_THRESHOLD_MS
 
     // T15: cached Flow values so the non-suspending session-start path can read them
-    // (same pattern as sessionMergeThresholdMs). pendingSessionLabel is consumed by
-    // createSessionFromPending / createSessionFromCurrentState.
+    // (cached from preference flows). pendingSessionLabel is consumed by
+    // createSessionFromCurrentState and the checkpoint.
     private var pendingSessionLabel: String? = null
     private var autoLabelSessionsEnabled: Boolean = true
     private var cachedReminderEveningHour: Int = 19
@@ -590,29 +630,24 @@ class WheelViewModel(
     // Notification service active flag
     private var notificationActive = false
 
+    /**
+     * A session that has ended and is awaiting the dedication prompt. The
+     * [session] (endedAt) and [durationSeconds] are snapshotted at the moment
+     * the session ended, and it is already being recorded by [recordJob] — the
+     * prompt only adds the dedication afterwards, so leaving it open (even
+     * overnight, or until the process dies) neither inflates the recorded
+     * time nor risks losing the session.
+     */
     private data class PendingSession(
-        val startTime: Long,
-        val rotations: Long,
-        val mantras: BigInteger,
-        val mantrasPerRotation: Long,
-        val mantraId: String,
-        val mode: SpinMode,
-        val averageRpm: Float,
-        val peakRpm: Float,
-        val intention: String?,
-        val sessionGoal: Long?,
-        val wheelId: String?
+        val session: Session,
+        val durationSeconds: Long,
+        val recordJob: Job
     )
 
     init {
         viewModelScope.launch {
             userPreferences.mantrasPerRotation.collect { value ->
                 _mantrasPerRotation.value = value
-            }
-        }
-        viewModelScope.launch {
-            userPreferences.sessionMergeThresholdMs.collect { value ->
-                sessionMergeThresholdMs = value
             }
         }
         viewModelScope.launch {
@@ -742,10 +777,12 @@ class WheelViewModel(
             }
         }
         viewModelScope.launch {
-            userPreferences.breathModeEnabled.collect { enabled ->
+            // distinctUntilChanged: DataStore re-emits on ANY preference write,
+            // which used to restart the microphone (even in the background).
+            userPreferences.breathModeEnabled.distinctUntilChanged().collect { enabled ->
                 _breathModeEnabled.value = enabled
                 if (enabled) {
-                    breathModeController?.start()
+                    if (_isAppInForeground.value) breathModeController?.start()
                     startSessionIfNeeded()
                     startPhysicsLoop()
                 } else {
@@ -788,78 +825,158 @@ class WheelViewModel(
             }
         }
         breathModeController = BreathModeController(appContext, viewModelScope)
+        recoverInterruptedSessions()
+        offerResumableSession()
         observeTodayProgress()
         loadLifetimeStats()
     }
 
     /**
+     * Computes the one-shot resume offer once, after checkpoint recovery, and
+     * only if no session is live or awaiting its dedication by then.
+     */
+    private fun offerResumableSession() {
+        viewModelScope.launch {
+            val candidate = detectResumableSession() ?: return@launch
+            val live = sessionStartTime != null || pendingDedicationSession != null
+            if (SessionRules.canOfferResume(candidate.sessionKey, sessionKey, live)) {
+                _resumableSession.value = candidate
+            }
+        }
+    }
+
+    /**
+     * Process-death recovery. Any `active_session` checkpoint left behind means
+     * the app died (OOM kill, crash, force-stop, battery) while a session was
+     * live. Each is recorded as a completed session with no dedication —
+     * exactly what onCleared + SessionSaveWorker would have saved — rather than
+     * restored as the live session: restoring would silently keep a timer
+     * running across the downtime (hours, possibly) and the user may never
+     * come back to end it. The existing "Resume your previous session?" banner
+     * still offers to continue it, replacing the saved row in place.
+     *
+     * Runs in [appScope] so it can't be cancelled half-way; upsert-by-key
+     * makes it safe to race with a pending SessionSaveWorker for the same
+     * session.
+     */
+    private fun recoverInterruptedSessions() {
+        recoveryJob = appScope.launch {
+            val recovered = try {
+                ledgerDao.recoverCheckpoints()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("WheelViewModel", "Checkpoint recovery failed", e)
+                emptyList()
+            }
+            recovered.lastOrNull()?.let { checkAchievements(it.stats.totalMantras) }
+        }
+    }
+
+    /** Snapshot of the live session for checkpointing, or null if there is nothing worth saving. */
+    private fun buildCheckpoint(now: Long = System.currentTimeMillis()): ActiveSessionCheckpoint? {
+        val key = sessionKey ?: return null
+        val startTime = sessionStartTime ?: return null
+        if (currentSessionRotations <= 0L) return null
+        return ActiveSessionCheckpoint(
+            sessionKey = key,
+            startedAt = startTime,
+            updatedAt = now,
+            rotationCount = currentSessionRotations,
+            mantrasPerRotation = livePricing().mantrasPerRotation,
+            totalMantras = currentSessionMantras,
+            mantraId = livePricing().mantraId,
+            mode = _spinMode.value.name,
+            averageRpm = if (rpmSampleCount > 0) sessionStartRpmSum / rpmSampleCount else 0f,
+            peakRpm = _peakRpm.value,
+            intention = _currentIntention.value.ifBlank { null },
+            sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null,
+            wheelId = livePricing().wheelId,
+            label = pendingSessionLabel,
+            durationSeconds = _sessionDurationSeconds.value
+        )
+    }
+
+    /**
+     * Persists the live session's checkpoint now (no-op without rotations).
+     * Called every [ActiveSessionCheckpoint.CHECKPOINT_INTERVAL_MS] and when
+     * the app goes to the background. Runs in [appScope]; skipped if the
+     * session was saved/discarded before the write got its turn.
+     */
+    private fun checkpointNow() {
+        val checkpoint = buildCheckpoint() ?: return
+        appScope.launch {
+            recoveryJob?.join()
+            checkpointMutex.withLock {
+                if (sessionKey != checkpoint.sessionKey) return@withLock
+                try {
+                    ledgerDao.saveCheckpoint(checkpoint)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("WheelViewModel", "Checkpoint write failed", e)
+                }
+            }
+        }
+    }
+
+    private fun startCheckpointing() {
+        checkpointJob?.cancel()
+        checkpointJob = viewModelScope.launch {
+            while (isActive) {
+                delay(ActiveSessionCheckpoint.CHECKPOINT_INTERVAL_MS)
+                checkpointNow()
+            }
+        }
+    }
+
+    private fun stopCheckpointing() {
+        checkpointJob?.cancel()
+        checkpointJob = null
+    }
+
+    /**
      * Collects today's sessions via SessionDao.observeSessionsForDay and reduces them
-     * into the four TodayProgress state flows. Recomputed whenever sessions change OR
-     * when the local calendar day rolls over (polled every 60s) OR when the user
-     * changes reminderEveningHour (since that drives morning/evening attribution).
+     * into the four TodayProgress state flows. Recomputed whenever sessions change,
+     * when the user changes reminderEveningHour (it drives morning/evening
+     * attribution), and whenever the local day or time zone changes.
+     *
+     * The day window is recomputed from the current wall-clock date and
+     * `ZoneId.systemDefault()` immediately whenever the app returns to the
+     * foreground, then every 60 s while it stays there. (It used to `delay()`
+     * until midnight; coroutine delays on Main are uptime-based and stall in
+     * deep sleep, so after an overnight sleep Jan 1 still showed Dec 31's
+     * totals, and zone changes were ignored.)
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun observeTodayProgress() {
         viewModelScope.launch {
-            val dayWindow = flow {
-                while (isActive) {
-                    emit(currentDayWindow())
-                    val now = System.currentTimeMillis()
-                    val tomorrow = startOfNextDay(now)
-                    delay((tomorrow - now + 1000L).coerceAtLeast(60_000L))
+            val dayWindow = _isAppInForeground.flatMapLatest { inForeground ->
+                if (inForeground) {
+                    flow {
+                        while (true) {
+                            emit(SessionRules.dayWindow(System.currentTimeMillis(), ZoneId.systemDefault()))
+                            delay(DAY_WINDOW_REFRESH_MS)
+                        }
+                    }
+                } else {
+                    emptyFlow() // keep the last window; refreshed on return to foreground
                 }
             }.distinctUntilChanged()
 
             dayWindow.combine(userPreferences.reminderEveningHour) { window, eveningHour ->
                 window to eveningHour
             }.distinctUntilChanged().flatMapLatest { (window, eveningHour) ->
-                sessionDao.observeSessionsForDay(window.first, window.second)
-                    .map { sessions -> sessions to eveningHour }
-            }.collect { (sessions, eveningHour) ->
-                var morning = false
-                var evening = false
-                var mantras = BigInteger.ZERO
-                var practiceMs = 0L
-                val calendar = Calendar.getInstance(TimeZone.getDefault())
-                for (session in sessions) {
-                    calendar.timeInMillis = session.startedAt
-                    val hour = calendar.get(Calendar.HOUR_OF_DAY)
-                    if (hour < eveningHour) morning = true else evening = true
-                    mantras = mantras.add(session.totalMantras)
-                    val endMs = session.endedAt ?: session.startedAt
-                    if (endMs >= session.startedAt) {
-                        practiceMs += (endMs - session.startedAt)
-                    }
-                }
-                _todayMorningCompleted.value = morning
-                _todayEveningCompleted.value = evening
-                _todayMantraCount.value = mantras
-                _todayPracticeSeconds.value = practiceMs / 1000L
+                sessionDao.observeSessionsForDay(window.startMs, window.endMs)
+                    .map { sessions -> Triple(sessions, eveningHour, window.zone) }
+            }.collect { (sessions, eveningHour, zone) ->
+                val progress = SessionRules.todayProgress(sessions, eveningHour, zone)
+                _todayMorningCompleted.value = progress.morningCompleted
+                _todayEveningCompleted.value = progress.eveningCompleted
+                _todayMantraCount.value = progress.mantras
+                _todayPracticeSeconds.value = progress.practiceSeconds
             }
         }
-    }
-
-    private fun startOfNextDay(epochMillis: Long): Long {
-        val calendar = Calendar.getInstance(TimeZone.getDefault())
-        calendar.timeInMillis = epochMillis
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        calendar.set(Calendar.MILLISECOND, 0)
-        calendar.add(Calendar.DAY_OF_MONTH, 1)
-        return calendar.timeInMillis
-    }
-
-    private fun currentDayWindow(): Pair<Long, Long> {
-        val calendar = Calendar.getInstance(TimeZone.getDefault())
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        calendar.set(Calendar.MILLISECOND, 0)
-        val startOfDay = calendar.timeInMillis
-        calendar.add(Calendar.DAY_OF_MONTH, 1)
-        val startOfNextDay = calendar.timeInMillis
-        return startOfDay to startOfNextDay
     }
 
     /**
@@ -973,9 +1090,9 @@ class WheelViewModel(
             checkRotationCompletion(angularDiff)
         }
 
-        dragHistory.add(DragEvent(angle, timestamp))
+        dragHistory.add(SpinPhysics.DragSample(angle, timestamp))
         // Keep only last 5 events for velocity calculation
-        while (dragHistory.size > 5) {
+        while (dragHistory.size > SpinPhysics.DRAG_HISTORY_SIZE) {
             dragHistory.removeAt(0)
         }
     }
@@ -985,11 +1102,11 @@ class WheelViewModel(
      */
     private fun checkLeftRotationCompletion(angularDiff: Float) {
         val totalRotation = _leftRotationAngle.value
-        val newRevolutions = (totalRotation / TWO_PI).toLong()
-        val oldRevolutions = ((totalRotation - angularDiff) / TWO_PI).toLong()
-        if (newRevolutions > oldRevolutions) {
-            _leftRotationCount.value += (newRevolutions - oldRevolutions)
-            onDualWheelRotationComplete(newRevolutions - oldRevolutions)
+        val crossed = SpinPhysics.revolutionsCrossed(totalRotation - angularDiff, totalRotation)
+        if (crossed > 0) {
+            ensureSessionForRotation()
+            _leftRotationCount.value += crossed
+            onDualWheelRotationComplete(crossed)
         }
     }
 
@@ -998,11 +1115,11 @@ class WheelViewModel(
      */
     private fun checkRightRotationCompletion(angularDiff: Float) {
         val totalRotation = _rightRotationAngle.value
-        val newRevolutions = (totalRotation / TWO_PI).toLong()
-        val oldRevolutions = ((totalRotation - angularDiff) / TWO_PI).toLong()
-        if (newRevolutions > oldRevolutions) {
-            _rightRotationCount.value += (newRevolutions - oldRevolutions)
-            onDualWheelRotationComplete(newRevolutions - oldRevolutions)
+        val crossed = SpinPhysics.revolutionsCrossed(totalRotation - angularDiff, totalRotation)
+        if (crossed > 0) {
+            ensureSessionForRotation()
+            _rightRotationCount.value += crossed
+            onDualWheelRotationComplete(crossed)
         }
     }
 
@@ -1011,6 +1128,7 @@ class WheelViewModel(
      * Both wheels contribute to the same session mantras.
      */
     private fun onDualWheelRotationComplete(count: Long) {
+        ensureSessionForRotation()
         currentSessionRotations += count
         updateSessionMantras()
         triggerHapticTick()
@@ -1029,49 +1147,12 @@ class WheelViewModel(
      * Called on pointer up - calculates flick velocity and starts momentum.
      */
     fun onDragEnd() {
-        if (dragHistory.size >= 2) {
-            // Use weighted average of last 3-5 events for smoother velocity
-            val eventsToConsider = dragHistory.takeLast(5)
-            var totalWeightedAngularDiff = 0f
-            var totalWeight = 0f
-
-            eventsToConsider.forEachIndexed { index, event ->
-                val weight = (index + 1).toFloat() // More recent events have higher weight
-                if (index > 0) {
-                    val prevEvent = eventsToConsider[index - 1]
-                    val timeDelta = (event.timestamp - prevEvent.timestamp).coerceAtLeast(1L) / 1000f
-                    if (timeDelta > 0) {
-                        var angularDiff = event.angle - prevEvent.angle
-                        // Handle angle wrap-around for clockwise detection
-                        if (angularDiff > PI) angularDiff -= TWO_PI
-                        if (angularDiff < -PI) angularDiff += TWO_PI
-                        totalWeightedAngularDiff += (angularDiff / timeDelta) * weight
-                        totalWeight += weight
-                    }
-                }
+        SpinPhysics.flickVelocity(dragHistory, _counterClockwiseEnabled.value)?.let { flick ->
+            if (flick.showCounterClockwiseReminder) {
+                // Show gentle reminder but still allow the motion
+                showCounterClockwiseReminder()
             }
-
-            if (totalWeight > 0) {
-                var velocity = totalWeightedAngularDiff / totalWeight
-
-                // Apply flick velocity multiplier for stronger spinning
-                velocity *= FLICK_VELOCITY_MULTIPLIER
-
-                // Check for counter-clockwise motion (only trigger for intentional CCW flicks)
-                if (velocity < -MIN_COUNTER_CLOCKWISE_VELOCITY) {
-                    // Significant counter-clockwise detected
-                    if (!_counterClockwiseEnabled.value) {
-                        // Show gentle reminder but still allow the motion
-                        showCounterClockwiseReminder()
-                    }
-                    velocity = velocity.coerceIn(-MAX_ANGULAR_VELOCITY, 0f)
-                } else {
-                    // Clockwise - apply higher cap
-                    velocity = velocity.coerceIn(0f, MAX_ANGULAR_VELOCITY)
-                }
-
-                _angularVelocity.value = velocity
-            }
+            _angularVelocity.value = flick.velocity
         }
 
         startSessionIfNeeded()
@@ -1160,11 +1241,12 @@ class WheelViewModel(
      * Updates the mantras per rotation setting.
      */
     fun setMantrasPerRotation(count: Long) {
+        if (count == _mantrasPerRotation.value) return
+        _mantrasPerRotation.value = count
+        _currentWheelId.value = null // Cleared because user manually modified settings
+        onSelectedPricingChanged()
         viewModelScope.launch {
-            _mantrasPerRotation.value = count
             userPreferences.setMantrasPerRotation(count)
-            _currentWheelId.value = null // Cleared because user manually modified settings
-            updateSessionMantras()
         }
     }
 
@@ -1172,9 +1254,35 @@ class WheelViewModel(
      * Updates the selected mantra.
      */
     fun setSelectedMantra(mantraId: String) {
+        if (mantraId == _currentMantra.value.id) return
+        _currentMantra.value = Mantras.byId(mantraId) ?: Mantras.OM_MANI_PADME_HUM
+        _currentWheelId.value = null // Cleared because user manually modified settings
+        onSelectedPricingChanged()
         viewModelScope.launch {
             userPreferences.setSelectedMantra(mantraId)
-            _currentWheelId.value = null // Cleared because user manually modified settings
+        }
+    }
+
+    /**
+     * The user picked a different capacity/mantra/wheel on the wheel screen.
+     * Rotations already counted keep the live session's own pricing: with
+     * rotations, the live session is saved as-is (no dedication prompt) and
+     * — if the wheel is still turning — practice continues in a new session
+     * priced with the new selection. Selection changes made elsewhere (e.g.
+     * the Settings screen writing preferences directly) never touch the live
+     * session; they apply from the next session.
+     */
+    private fun onSelectedPricingChanged() {
+        val liveRotations = if (sessionStartTime != null) currentSessionRotations else 0L
+        when (SessionRules.pricingChange(liveRotations, sessionPricing, selectedPricing())) {
+            SessionRules.PricingChange.NONE -> Unit
+            SessionRules.PricingChange.ADOPT -> sessionPricing = null
+            SessionRules.PricingChange.SPLIT -> {
+                val stillTurning = abs(_angularVelocity.value) > STOP_THRESHOLD ||
+                    _autoSpinEnabled.value || _autoSpinActive.value
+                recordLiveSessionWithoutPrompt()
+                if (stillTurning) startSessionIfNeeded()
+            }
         }
     }
 
@@ -1355,12 +1463,13 @@ class WheelViewModel(
      * Applies a saved wheel configuration (sets capacity and mantra).
      */
     fun applySavedWheel(wheel: SavedWheel) {
+        _mantrasPerRotation.value = wheel.capacity
+        _currentMantra.value = Mantras.byId(wheel.mantraId) ?: Mantras.OM_MANI_PADME_HUM
+        _currentWheelId.value = wheel.id
+        onSelectedPricingChanged()
         viewModelScope.launch {
-            _mantrasPerRotation.value = wheel.capacity
             userPreferences.setMantrasPerRotation(wheel.capacity)
             userPreferences.setSelectedMantra(wheel.mantraId)
-            _currentMantra.value = Mantras.byId(wheel.mantraId) ?: Mantras.OM_MANI_PADME_HUM
-            _currentWheelId.value = wheel.id
         }
     }
 
@@ -1399,33 +1508,11 @@ class WheelViewModel(
                 wheelId = wheelId
             )
 
-            sessionDao.insert(session)
-
-            // Update lifetime stats under the mutex so this read-modify-write cannot
-            // interleave with session-end, undo-delete, or subtract operations.
-            val newTotalMantras = lifetimeStatsMutex.withLock {
-                val existing = lifetimeStatsDao.getStats()
-                val updated = existing?.copy(
-                    totalRotations = existing.totalRotations + session.rotationCount,
-                    totalMantras = existing.totalMantras + session.totalMantras,
-                    sessionsCompleted = existing.sessionsCompleted + 1,
-                    totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + durationSeconds,
-                    averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                        (existing.totalSpinningTimeSeconds + durationSeconds) / (existing.sessionsCompleted + 1)
-                    } else durationSeconds
-                ) ?: LifetimeStats(
-                    id = 1,
-                    totalRotations = session.rotationCount,
-                    totalMantras = session.totalMantras,
-                    sessionsCompleted = 1,
-                    firstSessionAt = session.startedAt,
-                    totalSpinningTimeSeconds = durationSeconds,
-                    averageSessionDurationSeconds = durationSeconds
-                )
-                lifetimeStatsDao.upsert(updated)
-                updated.totalMantras
-            }
-            checkAchievements(newTotalMantras)
+            // Duration is the user-entered value (not endedAt - startedAt).
+            val recorded = durableWrite("practice log") {
+                ledgerDao.recordSession(session, durationSeconds)
+            } ?: return@launch
+            checkAchievements(recorded.stats.totalMantras)
         }
     }
 
@@ -1433,10 +1520,26 @@ class WheelViewModel(
      * Deletes a prayer wheel session and updates lifetime stats accordingly (without downgrading achievements).
      */
     fun deleteSession(session: Session) {
-        viewModelScope.launch {
-            sessionDao.deleteSessionById(session.id)
-            subtractSessionFromStats(session)
+        if (SessionRules.isDeletingLiveSession(session.sessionKey, sessionKey)) {
+            // The user is deleting the session they resumed: it goes entirely,
+            // including rotations since the resume (never credited yet).
+            discardLiveSessionOnly()
         }
+        if (_resumableSession.value?.id == session.id) _resumableSession.value = null
+        viewModelScope.launch {
+            durableWrite("deletion") {
+                checkpointMutex.withLock { ledgerDao.deleteSessionAndDebit(session.id) }
+            }
+        }
+    }
+
+    /** Drops the live session without saving it (a pending dedication is left alone). */
+    private fun discardLiveSessionOnly() {
+        sessionStopJob?.cancel()
+        sessionStopJob = null
+        stopPhysicsLoop()
+        _angularVelocity.value = 0f
+        resetSessionState()
     }
 
     /**
@@ -1445,7 +1548,9 @@ class WheelViewModel(
      */
     fun updateSessionLabel(session: Session, newLabel: String?) {
         viewModelScope.launch {
-            sessionDao.update(session.copy(label = newLabel))
+            // Targeted UPDATE: a whole-row write from this (possibly stale) copy
+            // could revert counts of a row that was replaced in place.
+            sessionDao.updateLabel(session.id, newLabel)
         }
     }
 
@@ -1454,50 +1559,7 @@ class WheelViewModel(
      */
     fun undoDeleteSession(session: Session) {
         viewModelScope.launch {
-            sessionDao.insert(session)
-            val sessionDurationSeconds = ((session.endedAt ?: session.startedAt) - session.startedAt) / 1000
-            // Hold the mutex across read-modify-write to serialize with other lifetime_stats writers.
-            lifetimeStatsMutex.withLock {
-                val existing = lifetimeStatsDao.getStats()
-                val newStats = existing?.copy(
-                    totalRotations = existing.totalRotations + session.rotationCount,
-                    totalMantras = existing.totalMantras + session.totalMantras,
-                    sessionsCompleted = existing.sessionsCompleted + 1,
-                    totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
-                    averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                        (existing.totalSpinningTimeSeconds + sessionDurationSeconds) / (existing.sessionsCompleted + 1)
-                    } else sessionDurationSeconds
-                ) ?: LifetimeStats(
-                    id = 1,
-                    totalRotations = session.rotationCount,
-                    totalMantras = session.totalMantras,
-                    sessionsCompleted = 1,
-                    firstSessionAt = session.startedAt,
-                    totalSpinningTimeSeconds = sessionDurationSeconds,
-                    averageSessionDurationSeconds = sessionDurationSeconds
-                )
-                lifetimeStatsDao.upsert(newStats)
-            }
-        }
-    }
-
-    private suspend fun subtractSessionFromStats(session: Session) {
-        // Hold the mutex across read-modify-write so concurrent adders (session save,
-        // manual log, undo-delete) can't interleave with this subtraction and clobber it.
-        lifetimeStatsMutex.withLock {
-            val existing = lifetimeStatsDao.getStats() ?: return@withLock
-            val sessionDuration = ((session.endedAt ?: session.startedAt) - session.startedAt) / 1000
-            val newCount = (existing.sessionsCompleted - 1).coerceAtLeast(0)
-            val newStats = existing.copy(
-                totalRotations = (existing.totalRotations - session.rotationCount).coerceAtLeast(0),
-                totalMantras = (existing.totalMantras - session.totalMantras).coerceAtLeast(java.math.BigInteger.ZERO),
-                sessionsCompleted = newCount,
-                totalSpinningTimeSeconds = (existing.totalSpinningTimeSeconds - sessionDuration).coerceAtLeast(0),
-                averageSessionDurationSeconds = if (newCount > 0) {
-                    (existing.totalSpinningTimeSeconds - sessionDuration).coerceAtLeast(0) / newCount
-                } else 0L
-            )
-            lifetimeStatsDao.upsert(newStats)
+            durableWrite("restored session") { ledgerDao.restoreSession(session) }
         }
     }
 
@@ -1506,30 +1568,62 @@ class WheelViewModel(
      * session records in the sessions table (so history is still browsable).
      * Use this to start fresh after correcting a data-corruption bug.
      *
-     * Holds the same [lifetimeStatsMutex] as every other lifetime_stats writer so
-     * a concurrent session-end save cannot interleave with this reset.
+     * Runs as one [LedgerDao] transaction, serialized with every other
+     * lifetime_stats writer (VM saves, SessionSaveWorker).
      */
     fun resetLifetimeStats() {
         viewModelScope.launch {
-            lifetimeStatsMutex.withLock {
-                lifetimeStatsDao.upsert(
-                    LifetimeStats(
-                        id = 1,
-                        totalRotations = 0L,
-                        totalMantras = BigInteger.ZERO,
-                        sessionsCompleted = 0L,
-                        firstSessionAt = null,
-                        totalSpinningTimeSeconds = 0L,
-                        averageSessionDurationSeconds = 0L
-                    )
-                )
-            }
+            durableWrite("lifetime reset") { ledgerDao.resetLifetime() } ?: return@launch
             // In-memory display reset so the wheel screen updates immediately.
             _lifetimeMantras.value = BigInteger.ZERO
             _highestMilestoneTier.value = 0
             // Trigger widget refresh (same pattern as the rotation-completion path).
             runCatching { PrayerWheelWidget().updateAll(appContext) }
         }
+    }
+
+    /**
+     * "Reset All Data": discards the in-memory live session (and any pending
+     * dedication), cancels a queued SessionSaveWorker, then deletes every
+     * session, the lifetime row and all preferences.
+     *
+     * The live session is discarded synchronously, before the DB work, so a
+     * session end / worker cannot re-insert it after the wipe. The DB work
+     * runs in [appScope] — not the Settings composable's scope — so leaving
+     * the screen mid-reset cannot leave a half-reset database.
+     */
+    fun resetAllData() {
+        val pendingRecord = pendingDedicationSession?.recordJob
+        discardLiveSession()
+        SessionSaveWorker.cancel(appContext)
+        appScope.launch {
+            // An ended session still being recorded must not land after the wipe.
+            pendingRecord?.join()
+            try {
+                checkpointMutex.withLock { ledgerDao.resetAll() }
+                userPreferences.clearAllData()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("WheelViewModel", "Reset all data failed", e)
+                _saveError.value = "Unable to reset data. Please try again."
+                return@launch
+            }
+            _lifetimeMantras.value = BigInteger.ZERO
+            _highestMilestoneTier.value = 0
+            runCatching { PrayerWheelWidget().updateAll(appContext) }
+        }
+    }
+
+    /** Drops the live session and any pending dedication without saving them. */
+    private fun discardLiveSession() {
+        sessionStopJob?.cancel()
+        sessionStopJob = null
+        stopPhysicsLoop()
+        _angularVelocity.value = 0f
+        pendingDedicationSession = null
+        _showDedicationPrompt.value = false
+        resetSessionState()
     }
 
     /**
@@ -1591,181 +1685,191 @@ class WheelViewModel(
      *  - had motion: `rotationCount > 0`
      *  - interrupted: `dedication == null` (a normally-ended session is not resumable)
      */
-    suspend fun detectResumableSession(): Session? {
+    private suspend fun detectResumableSession(): Session? {
+        // A session recovered from a checkpoint is the one to offer.
+        recoveryJob?.join()
         val recent = sessionDao.getMostRecentSession() ?: return null
         val now = System.currentTimeMillis()
-        val isRecent = recent.endedAt == null ||
-            (now - recent.startedAt) <= SESSION_NEW_THRESHOLD_MS
-        val hasRotations = recent.rotationCount > 0L
-        val isInterrupted = recent.dedication == null
-        return if (isRecent && hasRotations && isInterrupted) recent else null
+        return if (SessionRules.isResumable(recent, now, SESSION_NEW_THRESHOLD_MS)) recent else null
     }
 
     /**
      * T17: Resumes practice from a previously-interrupted session.
      *
      * Restores the in-memory counters and `startedAt` so the timer keeps counting
-     * from the original start. Deletes the prior DB record (it is being replaced
-     * by the in-flight resumed session, which will be re-persisted on the next
-     * endSession/onCleared). Re-enters active session state, restarts the
-     * notification service and session timer.
+     * from the original start, and adopts the saved row's session key. The row
+     * and its lifetime contribution are KEPT: the next save of this session
+     * (End Session, onCleared/SessionSaveWorker, or checkpoint recovery) upserts
+     * by key, replacing the row in place — debit old, credit new, update row —
+     * in one transaction. (Previously the row was deleted and debited up
+     * front, so a process death after resuming lost a persisted session.)
+     *
+     * A live session with rotations is saved first instead of being
+     * overwritten by the restored state.
      *
      * Does NOT restore transient physics state (angularVelocity, drag history).
      */
-    fun resumeFromSession(session: Session) {
+    fun resumeFromSession(offered: Session) {
+        _resumableSession.value = null
+        if (resumeInProgress) return
+        if (!SessionRules.canOfferResume(offered.sessionKey, sessionKey, hasLiveSession = false)) return
+        resumeInProgress = true
+        if (sessionStartTime != null && currentSessionRotations > 0L) {
+            recordLiveSessionWithoutPrompt()
+        }
         viewModelScope.launch {
-            // Drop the prior record so it isn't double-counted when the resumed
-            // session is later saved. The in-memory state below replaces it.
-            // Also roll back this session's contribution from lifetime_stats — without
-            // this, the resumed session's mantras get double-counted: once when the
-            // original was saved, again when updateLifetimeStats() runs at the resumed
-            // session's end. updateLifetimeStats() re-adds the full accumulated total.
-            if (session.id != 0L) {
-                sessionDao.deleteSessionById(session.id)
-                subtractSessionFromStats(session)
-            }
-
-            // Mirror startSessionIfNeeded() restoration, but preserve the
-            // accumulated rotations/start time instead of zeroing them.
-            sessionStartTime = session.startedAt
-            currentSessionRotations = session.rotationCount
-            currentSessionMantras = session.totalMantras
-            _rotationCount.value = session.rotationCount
-            _sessionMantras.value = session.totalMantras
-            _hasActiveSession.value = true
-            _isPaused.value = false
-            _peakRpm.value = session.peakRpm
-            _averageRpm.value = session.averageRpm
-            // Transient RPM samples are not persisted — reset so the running
-            // average re-converges from zero rather than from stale state.
-            rpmSamples.clear()
-            rpmSampleCount = 0
-            sessionStartRpmSum = 0f
-            val elapsedMs = (System.currentTimeMillis() - session.startedAt)
-                .coerceAtLeast(0L)
-            _sessionDuration.value = elapsedMs
-            _sessionDurationSeconds.value = elapsedMs / 1000
-            pendingSessionLabel = session.label
-
-            startNotificationService()
-
-            // Restart the session timer (mirrors startSessionIfNeeded). The
-            // timeGoalReached flag is pre-set when the resumed session already
-            // meets the goal so we don't immediately fire the milestone haptic.
-            sessionTimerJob?.cancel()
-            sessionTimerJob = viewModelScope.launch {
-                var timeGoalReached = _sessionTimeGoalSeconds.value > 0 &&
-                    _sessionDurationSeconds.value >= _sessionTimeGoalSeconds.value
-                while (isActive) {
-                    _sessionDuration.value = System.currentTimeMillis() - session.startedAt
-                    val newSeconds = _sessionDuration.value / 1000
-                    _sessionDurationSeconds.value = newSeconds
-
-                    val goalSecs = _sessionTimeGoalSeconds.value
-                    if (goalSecs > 0 && newSeconds >= goalSecs && !timeGoalReached) {
-                        timeGoalReached = true
-                        triggerMilestoneHaptic()
-                    }
-
-                    if (notificationActive && !_isPaused.value) {
-                        SessionNotificationService.update(
-                            newSeconds,
-                            _sessionMantras.value,
-                            paused = false
-                        )
-                    }
-
-                    delay(SESSION_TIMER_INTERVAL_MS)
+            try {
+                // A save queued by a previous process for this session must land
+                // first, or its counts would be overtaken by the resumed live ones.
+                val pendingKey = offered.sessionKey
+                if (pendingKey != null &&
+                    !SessionSaveWorker.awaitPending(appContext, pendingKey, RESUME_WORKER_WAIT_MS)
+                ) {
+                    _saveError.value = "Still saving that session. Please try Resume again in a moment."
+                    return@launch
                 }
+                // Restore from the row as it is NOW (plus any newer checkpoint),
+                // never from the offered copy, which may be stale.
+                val row = durableWrite("resumed session") {
+                    checkpointMutex.withLock {
+                        ledgerDao.prepareResume(offered.id, java.util.UUID.randomUUID().toString())
+                    }
+                }
+                if (row == null) {
+                    if (_saveError.value == null) _saveError.value = "That session can no longer be resumed."
+                    return@launch
+                }
+                if (row.sessionKey == sessionKey) return@launch // already live
+                // The user may have started spinning while we waited: keep that.
+                if (sessionStartTime != null) {
+                    if (currentSessionRotations > 0L) recordLiveSessionWithoutPrompt() else resetSessionState()
+                }
+                restoreLiveSession(row)
+            } finally {
+                resumeInProgress = false
             }
         }
     }
 
+    /** Makes [session] (a freshly read row with a session key) the live session. */
+    private fun restoreLiveSession(session: Session) {
+        sessionKey = session.sessionKey ?: java.util.UUID.randomUUID().toString()
+
+        // Mirror startSessionIfNeeded() restoration, but preserve the
+        // accumulated rotations/start time instead of zeroing them.
+        sessionStartTime = session.startedAt
+        currentSessionRotations = session.rotationCount
+        // The resumed session keeps its own capacity/mantra/wheel for its whole
+        // life (never the current selection), and the wheel screen switches to
+        // it so further rotations visibly count at that capacity.
+        sessionPricing = SessionRules.SessionPricing(session.mantrasPerRotation, session.mantraId, session.wheelId)
+        currentSessionMantras = SessionRules.sessionMantras(session.rotationCount, session.mantrasPerRotation)
+        showSessionPricingAsSelection(session)
+        _rotationCount.value = session.rotationCount
+        _sessionMantras.value = currentSessionMantras
+        _hasActiveSession.value = true
+        _isPaused.value = false
+        _peakRpm.value = session.peakRpm
+        _averageRpm.value = session.averageRpm
+        // Transient RPM samples are not persisted — reset so the running
+        // average re-converges from zero rather than from stale state.
+        rpmSampleCount = 0
+        sessionStartRpmSum = 0f
+        // Continue from the recorded practice time, not from startedAt: the
+        // gap between the original end and now was not practice.
+        val now = System.currentTimeMillis()
+        val timerBase = SessionRules.resumeTimerBase(now, LifetimeStatsMath.storedDurationSeconds(session))
+        sessionTimerBase = timerBase
+        _sessionDuration.value = now - timerBase
+        _sessionDurationSeconds.value = (now - timerBase) / 1000
+        pendingSessionLabel = session.label
+
+        startNotificationService()
+
+        // Restart the session timer (mirrors startSessionIfNeeded). The
+        // timeGoalReached flag is pre-set when the resumed session already
+        // meets the goal so we don't immediately fire the milestone haptic.
+        startSessionTimer(timerBase, skipGoalIfAlreadyMet = true)
+        startCheckpointing()
+        checkpointNow()
+    }
+
+    /** Shows the resumed session's own wheel (capacity/mantra/wheel) as the current selection. */
+    private fun showSessionPricingAsSelection(session: Session) {
+        _mantrasPerRotation.value = session.mantrasPerRotation
+        Mantras.byId(session.mantraId)?.let { _currentMantra.value = it }
+        _currentWheelId.value = session.wheelId
+        viewModelScope.launch {
+            userPreferences.setMantrasPerRotation(session.mantrasPerRotation)
+            userPreferences.setSelectedMantra(session.mantraId)
+        }
+    }
+
     /**
-     * Confirms dedication and saves the session.
+     * Saves the live session as-is (no dedication prompt) and clears it.
+     * Used when something else must take over the live-session slot.
+     */
+    private fun recordLiveSessionWithoutPrompt() {
+        val session = createSessionFromCurrentState() ?: return
+        val durationSeconds = _sessionDurationSeconds.value
+        sessionKey = null
+        resetSessionState()
+        viewModelScope.launch { recordCompletedSession(session, durationSeconds) }
+    }
+
+    /**
+     * Applies the dedication to the already-recorded session and dismisses
+     * the prompt. The session itself was recorded when it ended.
      */
     fun confirmDedication(dedication: String?) {
+        val pending = pendingDedicationSession
+        dismissDedicationPrompt()
         viewModelScope.launch {
-            pendingDedicationSession?.let { pending ->
-                // Save custom dedication if provided
-                if (dedication != null && dedication.isNotBlank()) {
-                    userPreferences.setCustomDedication(dedication)
-                }
-
-                // Save the session to Room
-                val endedAt = System.currentTimeMillis()
-                val session = createSessionFromPending(pending, endedAt, dedication)
-
-                sessionDao.insert(session)
-
-                // Update lifetime stats (carrying forward spinning time fields)
-                updateLifetimeStats(session)
-
-                lastSessionEndTime = endedAt
+            // Save custom dedication if provided
+            if (dedication != null && dedication.isNotBlank()) {
+                userPreferences.setCustomDedication(dedication)
             }
-
-            pendingDedicationSession = null
-            _showDedicationPrompt.value = false
-            resetSessionState()
+            val key = pending?.session?.sessionKey
+            if (dedication != null && key != null) {
+                pending.recordJob.join()
+                durableWrite("dedication") { sessionDao.updateDedicationByKey(key, dedication) }
+            }
         }
     }
 
     /**
-     * Skips the dedication prompt.
+     * Skips the dedication prompt. The session was already recorded (with no
+     * dedication) when it ended.
      */
     fun skipDedication() {
-        viewModelScope.launch {
-            pendingDedicationSession?.let { pending ->
-                val session = createSessionFromPending(pending, System.currentTimeMillis(), null)
-                sessionDao.insert(session)
-                updateLifetimeStats(session)
-            }
-            pendingDedicationSession = null
-            _showDedicationPrompt.value = false
-            resetSessionState()
-        }
+        dismissDedicationPrompt()
+    }
+
+    private fun dismissDedicationPrompt() {
+        pendingDedicationSession = null
+        _showDedicationPrompt.value = false
+        // Clear the ended session's display — unless a new session has already
+        // started while the prompt was open (spinning again), which must be kept.
+        if (sessionStartTime == null) resetSessionState()
     }
 
     /**
-     * Creates a Session from pending session data.
+     * Creates a Session from the current live state, ending at [endedAt]
+     * (session end, onCleared, or when superseded by a resume).
      */
-    private fun createSessionFromPending(pending: PendingSession, endedAt: Long, dedication: String?): Session {
-        return Session(
-            startedAt = pending.startTime,
-            endedAt = endedAt,
-            rotationCount = pending.rotations,
-            mantrasPerRotation = pending.mantrasPerRotation,
-            totalMantras = pending.mantras,
-            mantraId = pending.mantraId,
-            dedication = dedication,
-            mode = pending.mode.name,
-            averageRpm = pending.averageRpm,
-            peakRpm = pending.peakRpm,
-            totalSpins = pending.rotations,
-            intention = pending.intention,
-            sessionGoal = pending.sessionGoal,
-            wheelId = pending.wheelId,
-            label = pendingSessionLabel
-        )
-    }
-
-    /**
-     * Creates a Session from the current state (for onCleared).
-     */
-    private fun createSessionFromCurrentState(): Session? {
+    private fun createSessionFromCurrentState(endedAt: Long = System.currentTimeMillis()): Session? {
         val startTime = sessionStartTime ?: return null
         if (currentSessionRotations == 0L) return null
 
         val avgRpm = if (rpmSampleCount > 0) sessionStartRpmSum / rpmSampleCount else 0f
-        val endedAt = System.currentTimeMillis()
 
         return Session(
             startedAt = startTime,
             endedAt = endedAt,
             rotationCount = currentSessionRotations,
-            mantrasPerRotation = _mantrasPerRotation.value,
+            mantrasPerRotation = livePricing().mantrasPerRotation,
             totalMantras = currentSessionMantras,
-            mantraId = _currentMantra.value.id,
+            mantraId = livePricing().mantraId,
             dedication = null,
             mode = _spinMode.value.name,
             averageRpm = avgRpm,
@@ -1773,65 +1877,37 @@ class WheelViewModel(
             totalSpins = currentSessionRotations,
             intention = _currentIntention.value.ifBlank { null },
             sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null,
-            wheelId = _currentWheelId.value,
-            label = pendingSessionLabel
+            wheelId = livePricing().wheelId,
+            label = pendingSessionLabel,
+            sessionKey = sessionKey
         )
     }
 
     /**
-     * Updates lifetime stats by upserting with carried-forward spinning time fields.
-     * SQLiteFullException (disk full) is caught and surfaced via [_saveError]; we
-     * bail before achievements/milestone updates so a write failure does not produce
-     * a misleading tier bump based on stale in-memory state.
+     * Inserts [session] and credits it to lifetime stats in ONE transaction.
+     * SQLiteFullException (disk full) is surfaced via [_saveError]; on failure we
+     * bail before achievements/milestone updates so a write failure does not
+     * produce a misleading tier bump based on stale in-memory state.
      */
-    private suspend fun updateLifetimeStats(session: Session) {
-        val sessionDurationSeconds = _sessionDurationSeconds.value
-        val newStats = try {
-            // Hold the mutex across the read-modify-write so concurrent writers (manual log,
-            // undo-delete, subtract) can't interleave and clobber each other's increment.
-            lifetimeStatsMutex.withLock {
-                val existing = lifetimeStatsDao.getStats()
-
-                val updated = existing?.copy(
-                    totalRotations = existing.totalRotations + session.rotationCount,
-                    totalMantras = existing.totalMantras + session.totalMantras,
-                    sessionsCompleted = existing.sessionsCompleted + 1,
-                    totalSpinningTimeSeconds = existing.totalSpinningTimeSeconds + sessionDurationSeconds,
-                    averageSessionDurationSeconds = if (existing.sessionsCompleted > 0) {
-                        (existing.totalSpinningTimeSeconds + sessionDurationSeconds) / (existing.sessionsCompleted + 1)
-                    } else sessionDurationSeconds
-                ) ?: LifetimeStats(
-                    id = 1,
-                    totalRotations = session.rotationCount,
-                    totalMantras = session.totalMantras,
-                    sessionsCompleted = 1,
-                    firstSessionAt = session.startedAt,
-                    totalSpinningTimeSeconds = sessionDurationSeconds,
-                    averageSessionDurationSeconds = sessionDurationSeconds
-                )
-
-                lifetimeStatsDao.upsert(updated)
-                updated
-            }
-        } catch (e: android.database.sqlite.SQLiteFullException) {
-            android.util.Log.e("WheelViewModel", "Disk full - session stats not saved", e)
-            _saveError.value = "Storage is full. Unable to save session data. Please free up space."
-            return
-        } catch (e: Exception) {
-            android.util.Log.e("WheelViewModel", "Failed to save session", e)
-            return
-        }
-        checkAchievements(newStats.totalMantras)
-        updateHighestMilestoneTier(newStats.totalMantras)
+    private suspend fun recordCompletedSession(session: Session, durationSeconds: Long) {
+        // Duration is the live session timer, not endedAt - startedAt. Upserts by
+        // session key and clears the session's checkpoint in the same transaction.
+        val recorded = durableWrite("session") {
+            checkpointMutex.withLock { ledgerDao.recordSession(session, durationSeconds) }
+        } ?: return
+        checkAchievements(recorded.stats.totalMantras)
+        updateHighestMilestoneTier(recorded.stats.totalMantras)
     }
 
     private fun startSessionIfNeeded() {
         val now = System.currentTimeMillis()
-        val needsNewSession = sessionStartTime == null ||
-            (lastSessionEndTime != null && now - lastSessionEndTime!! > sessionMergeThresholdMs)
-
-        if (needsNewSession) {
+        if (SessionRules.needsNewSession(sessionStartTime)) {
+            // A session is live now: don't offer to resume another one.
+            _resumableSession.value = null
             sessionStartTime = now
+            sessionTimerBase = now
+            sessionPricing = null // captured from the selection at the first rotation
+            sessionKey = java.util.UUID.randomUUID().toString()
             currentSessionRotations = 0L
             currentSessionMantras = BigInteger.ZERO
             _hasActiveSession.value = true
@@ -1840,51 +1916,64 @@ class WheelViewModel(
             _averageRpm.value = 0f
             _sessionDurationSeconds.value = 0L
             _isPaused.value = false
-            rpmSamples.clear()
+            // The previous session's counters may still be displayed (dedication
+            // prompt still open); this is a new session.
+            _rotationCount.value = 0L
+            _sessionMantras.value = BigInteger.ZERO
             rpmSampleCount = 0
             sessionStartRpmSum = 0f
 
             // T15: auto-suggest morning/evening label. Attribution matches the rule in
             // observeTodayProgress() / TodayProgressCard — hour is strictly less than
             // reminderEveningHour for "morning", otherwise "evening". Null when disabled.
-            pendingSessionLabel = if (autoLabelSessionsEnabled) {
-                val cal = Calendar.getInstance(TimeZone.getDefault())
-                cal.timeInMillis = now
-                if (cal.get(Calendar.HOUR_OF_DAY) < cachedReminderEveningHour) "morning" else "evening"
-            } else {
-                null
-            }
+            pendingSessionLabel = SessionRules.autoLabel(
+                now, cachedReminderEveningHour, ZoneId.systemDefault(), autoLabelSessionsEnabled
+            )
 
             // Start notification service
             startNotificationService()
 
             // Start session timer
-            sessionTimerJob?.cancel()
-            sessionTimerJob = viewModelScope.launch {
-                val startTime = now
-                var timeGoalReached = false
-                while (isActive) {
-                    _sessionDuration.value = System.currentTimeMillis() - startTime
-                    val newSeconds = _sessionDuration.value / 1000
-                    _sessionDurationSeconds.value = newSeconds
+            startSessionTimer(now, skipGoalIfAlreadyMet = false)
+            startCheckpointing()
+        }
+    }
 
-                    val goalSecs = _sessionTimeGoalSeconds.value
-                    if (goalSecs > 0 && newSeconds >= goalSecs && !timeGoalReached) {
-                        timeGoalReached = true
-                        triggerMilestoneHaptic()
-                    }
+    /**
+     * (Re)starts the 1 Hz session timer measuring elapsed time from [startTime].
+     * Fires the time-goal milestone haptic once when the goal is first reached
+     * and refreshes the foreground notification each tick.
+     *
+     * @param skipGoalIfAlreadyMet when true (resume path), the goal haptic is
+     *   suppressed if the restored duration already meets the goal at timer start.
+     */
+    private fun startSessionTimer(startTime: Long, skipGoalIfAlreadyMet: Boolean) {
+        sessionTimerJob?.cancel()
+        sessionTimerJob = viewModelScope.launch {
+            var timeGoalReached = skipGoalIfAlreadyMet &&
+                _sessionTimeGoalSeconds.value > 0 &&
+                _sessionDurationSeconds.value >= _sessionTimeGoalSeconds.value
+            while (isActive) {
+                _sessionDuration.value = System.currentTimeMillis() - startTime
+                val newSeconds = _sessionDuration.value / 1000
+                _sessionDurationSeconds.value = newSeconds
 
-                    // Update notification every second with current values
-                    if (notificationActive && !_isPaused.value) {
-                        SessionNotificationService.update(
-                            newSeconds,
-                            _sessionMantras.value,
-                            paused = false
-                        )
-                    }
-
-                    delay(SESSION_TIMER_INTERVAL_MS)
+                val goalSecs = _sessionTimeGoalSeconds.value
+                if (goalSecs > 0 && newSeconds >= goalSecs && !timeGoalReached) {
+                    timeGoalReached = true
+                    triggerMilestoneHaptic()
                 }
+
+                // Update notification every second with current values
+                if (notificationActive && !_isPaused.value) {
+                    SessionNotificationService.update(
+                        newSeconds,
+                        _sessionMantras.value,
+                        paused = false
+                    )
+                }
+
+                delay(SESSION_TIMER_INTERVAL_MS)
             }
         }
     }
@@ -1908,53 +1997,28 @@ class WheelViewModel(
                 lastFrameTime = currentTime
 
                 // Determine friction coefficient based on mode and state
-                val isTwoHandedMode = _spinMode.value == SpinMode.TWO_HANDED ||
-                                     _spinMode.value == SpinMode.TWO_HANDED_AUTO ||
-                                     (_twoHandedEnabled.value && _autoSpinEnabled.value)
+                val isTwoHandedMode = SpinPhysics.isTwoHandedMode(
+                    _spinMode.value, _twoHandedEnabled.value, _autoSpinEnabled.value
+                )
+
+                // Breath mode: microphone amplitude applies clockwise torque (0 when off).
+                val breathAmp = if (_breathModeEnabled.value)
+                    breathModeController?.amplitude?.value ?: 0f else 0f
 
                 // Calculate velocity - in auto mode we ramp toward target, otherwise apply friction
-                val currentOmega = _angularVelocity.value
-                val calculatedVelocity = if (_autoSpinEnabled.value && !isTwoHandedMode) {
-                    // Auto-spin: torque-limited ramp toward target RPM (~0.5-1.5s to reach set speed)
-                    val targetOmega = _autoSpinRpm.value * 2 * PI.toFloat() / 60f
-                    val gap = targetOmega - currentOmega
-                    val maxStepThisFrame = AUTO_SPIN_MAX_ACCEL_PER_FRAME * (deltaTime * 60f)
-                    currentOmega + gap.coerceIn(-maxStepThisFrame, maxStepThisFrame)
-                } else {
-                    // Manual / two-handed / coast / breath: friction decay ω_{t+1} = ω_t × (1 - μ × Δt)
-                    val frictionCoefficient = when {
-                        isTwoHandedMode && _twoHandedEngaged.value -> TWO_HANDED_FRICTION
-                        else -> _baseFriction.value
-                    }
-                    val frictionDecayed = currentOmega * (1f - frictionCoefficient * deltaTime)
+                val calculatedVelocity = SpinPhysics.stepVelocity(
+                    currentOmega = _angularVelocity.value,
+                    deltaTime = deltaTime,
+                    autoSpinEnabled = _autoSpinEnabled.value,
+                    isTwoHandedMode = isTwoHandedMode,
+                    twoHandedEngaged = _twoHandedEngaged.value,
+                    autoSpinRpm = _autoSpinRpm.value,
+                    baseFriction = _baseFriction.value,
+                    weightAngleDegrees = _weightAngle.value,
+                    breathAmplitude = breathAmp
+                )
 
-                    // Weight→wheel coupling: the chain weight acts as a pendulum restoring force.
-                    // Applied as additional friction opposing motion, capped to never reverse direction.
-                    val weightAngleRad = _weightAngle.value * PI.toFloat() / 180f
-                    val couplingDecel = WEIGHT_COUPLING_COEFFICIENT * sin(weightAngleRad) * deltaTime
-                    val withCoupling = when {
-                        frictionDecayed > 0f -> (frictionDecayed - couplingDecel).coerceAtLeast(0f)
-                        frictionDecayed < 0f -> (frictionDecayed + couplingDecel).coerceAtMost(0f)
-                        else -> frictionDecayed
-                    }
-
-                    // Breath mode: microphone amplitude applies clockwise torque proportional
-                    // to loudness, alongside the existing friction/weight forces. This is purely
-                    // additive — no existing physics formula is modified.
-                    val breathAmp = if (_breathModeEnabled.value)
-                        breathModeController?.amplitude?.value ?: 0f else 0f
-                    val withBreath = if (breathAmp > 0f) {
-                        withCoupling + breathAmp * BREATH_TORQUE * deltaTime
-                    } else withCoupling
-
-                    // Static friction: clean halt when very slow and no torque applied this frame.
-                    // Breath is allowed to accumulate from rest (otherwise tiny per-frame breath
-                    // torque could never break through the 0.05 rad/s threshold).
-                    if (breathAmp > BREATH_ACTIVE_THRESHOLD) withBreath
-                    else if (abs(withBreath) < STATIC_FRICTION_THRESHOLD) 0f else withBreath
-                }
-
-                _angularVelocity.value = if (abs(calculatedVelocity) < STOP_THRESHOLD) 0f else calculatedVelocity
+                _angularVelocity.value = SpinPhysics.snapToStop(calculatedVelocity)
 
                 // Update rotation angle
                 val deltaAngle = calculatedVelocity * deltaTime
@@ -1963,23 +2027,19 @@ class WheelViewModel(
                 _rotationAngle.value = newAngle
 
                 // Count rotations when crossing 2π boundary
-                val oldRevolutions = (oldAngle / TWO_PI).toLong()
-                val newRevolutions = (newAngle / TWO_PI).toLong()
-                if (newRevolutions > oldRevolutions) {
-                    onRotationComplete(newRevolutions - oldRevolutions)
+                val crossed = SpinPhysics.revolutionsCrossed(oldAngle, newAngle)
+                if (crossed > 0) {
+                    onRotationComplete(crossed)
                 }
 
                 // Update RPM tracking: RPM = |ω| * 60 / (2π)
-                val currentRpm = abs(_angularVelocity.value) * 60f / TWO_PI
+                val currentRpm = SpinPhysics.rpm(_angularVelocity.value)
                 _currentRpm.value = currentRpm
                 audioEngine?.updateDrone(currentRpm)
 
                 // Calculate weight angle based on centrifugal force
-                // angle = atan(rpm / 30) clamped to 0..80 degrees
-                val targetWeightAngle = (kotlin.math.atan(currentRpm.toDouble() / 30.0) * 180.0 / PI).toFloat()
-                    .coerceIn(0f, 80f)
-                // Smooth interpolation toward target angle
-                _weightAngle.value += (targetWeightAngle - _weightAngle.value) * 0.1f
+                // (atan(rpm / 30) clamped to 0..80 degrees), smoothly interpolated.
+                _weightAngle.value = SpinPhysics.stepWeightAngle(_weightAngle.value, currentRpm)
 
                 // Track peak RPM
                 if (currentRpm > _peakRpm.value) {
@@ -1987,7 +2047,6 @@ class WheelViewModel(
                 }
 
                 // Track samples for average RPM calculation
-                rpmSamples.add(currentRpm)
                 rpmSampleCount++
                 sessionStartRpmSum += currentRpm
 
@@ -2021,7 +2080,7 @@ class WheelViewModel(
                 // Spawn new particles while spinning
                 val velocity = abs(_angularVelocity.value)
                 if (velocity > STOP_THRESHOLD && canvasWidth > 0 && canvasHeight > 0) {
-                    val spawnProbability = tieredParticleSpawnProbability(velocity)
+                    val spawnProbability = SpinPhysics.particleSpawnProbability(velocity)
                     // Scale spawn by background animation intensity (0=off, 1=subtle, 2=full).
                     // Off => 0 spawns; subtle => 0.15x; full => 1.0x.
                     val intensityScale = _bgAnimationIntensity.value / 2f
@@ -2058,27 +2117,15 @@ class WheelViewModel(
         _isSpinning.value = false
     }
 
-    /**
-     * Per-frame star-particle spawn probability, tiered across the RPM range.
-     * Boundary ω values are 20/50/90/120 RPM × 2π/60 ≈ 2.0944/5.2359/9.4247/12.566.
-     * Tier 4 (Dissolving) caps at the [MAX_ANGULAR_VELOCITY] devotional ceiling.
-     */
-    private fun tieredParticleSpawnProbability(angularVelocity: Float): Float {
-        val omega = abs(angularVelocity)
-        return when {
-            omega <= 2.0944f -> 0f
-            omega <= 5.2359f -> ((omega - 2.0944f) / (5.2359f - 2.0944f)) * 0.15f
-            omega <= 9.4247f -> 0.15f + ((omega - 5.2359f) / (9.4247f - 5.2359f)) * (0.35f - 0.15f)
-            else -> 0.35f + ((omega - 9.4247f) / (MAX_ANGULAR_VELOCITY - 9.4247f)).coerceIn(0f, 1f) * (0.6f - 0.35f)
-        }
-    }
-
     private fun scheduleSessionSave() {
+        // The session's end is when the wheel stopped, not when the 30 s grace
+        // period below expired.
+        val stoppedAt = System.currentTimeMillis()
         sessionStopJob?.cancel()
         sessionStopJob = viewModelScope.launch {
             delay(SESSION_STOP_DELAY_MS)
             if (abs(_angularVelocity.value) < STOP_THRESHOLD) {
-                saveSessionWithDedication()
+                saveSessionWithDedication(endedAt = stoppedAt)
             }
         }
     }
@@ -2086,15 +2133,17 @@ class WheelViewModel(
     private var lastWidgetUpdateMs = 0L
 
     private fun onRotationComplete(count: Long) {
+        ensureSessionForRotation()
         currentSessionRotations += count
+        val pricedAt = livePricing().mantrasPerRotation
 
         viewModelScope.launch {
             // In-memory lifetime mantras only — provides the live display while spinning.
             // The lifetime_stats DB row is written EXACTLY ONCE per session at session end
-            // via updateLifetimeStats(). Writing it here on every rotation caused every
+            // via recordCompletedSession(). Writing it here on every rotation caused every
             // session's mantras to be double-counted: once incrementally per-rotation here,
             // then again at session save, inflating lifetime totals by N×.
-            val mantrasThisRotation = _mantrasPerRotation.value.toBigInteger() * count.toBigInteger()
+            val mantrasThisRotation = SessionRules.sessionMantras(count, pricedAt)
             val previousTotalMantras = _lifetimeMantras.value
             val newTotalMantras = previousTotalMantras + mantrasThisRotation
             _lifetimeMantras.value = newTotalMantras
@@ -2103,9 +2152,7 @@ class WheelViewModel(
             // Singing bowl at lifetime-mantra milestones (1K → 1T, tiers 0-7).
             // Use indexOfLast so a single high-capacity rotation that crosses
             // several thresholds plays the brightest tier reached, not the first.
-            val tierCrossed = audioMilestoneThresholds.indexOfLast { threshold ->
-                previousTotalMantras < threshold && newTotalMantras >= threshold
-            }
+            val tierCrossed = Milestones.highestTierCrossed(previousTotalMantras, newTotalMantras)
             if (tierCrossed >= 0) {
                 audioEngine?.playBowlTone(tierCrossed)
             }
@@ -2151,34 +2198,49 @@ class WheelViewModel(
     }
 
     private fun updateSessionMantras() {
-        currentSessionMantras = currentSessionRotations.toBigInteger() * _mantrasPerRotation.value.toBigInteger()
+        currentSessionMantras = SessionRules.sessionMantras(currentSessionRotations, livePricing().mantrasPerRotation)
         _sessionMantras.value = currentSessionMantras
     }
 
-    private fun saveSessionWithDedication() {
+    /**
+     * Ends the live session at [endedAt]: snapshots it (end time and duration),
+     * stops the session timer, notification and checkpointing, records it
+     * right away, and shows the dedication prompt.
+     *
+     * The duration is `endedAt − startedAt`, fixed now — previously the
+     * prompt's confirm time was used as endedAt and the still-running live
+     * timer as the lifetime duration, so a prompt left open overnight
+     * recorded ~8 h of practice. The displayed counters are kept for the
+     * prompt; `sessionStartTime` is cleared so a spin while the prompt is
+     * open starts a new session instead of being silently dropped.
+     */
+    private fun saveSessionWithDedication(endedAt: Long = System.currentTimeMillis()) {
         val startTime = sessionStartTime ?: return
         if (currentSessionRotations == 0L) {
             resetSessionState()
             return
         }
+        val end = endedAt.coerceAtLeast(startTime)
+        val session = createSessionFromCurrentState(end) ?: return
+        val timerBase = sessionTimerBase ?: startTime
+        val durationSeconds = SessionRules.endedSessionDurationSeconds(timerBase, end)
 
-        // Calculate average RPM from samples
-        val avgRpm = if (rpmSampleCount > 0) sessionStartRpmSum / rpmSampleCount else 0f
+        // Hand the session off: no further timer ticks, checkpoints or
+        // notifications for it, and no onCleared/worker save (it's recorded below).
+        sessionKey = null
+        sessionStartTime = null
+        sessionTimerBase = null
+        sessionTimerJob?.cancel()
+        sessionTimerJob = null
+        stopCheckpointing()
+        stopNotificationService()
+        sessionStopJob?.cancel()
+        sessionStopJob = null
+        _sessionDuration.value = (end - timerBase).coerceAtLeast(0L)
+        _sessionDurationSeconds.value = durationSeconds
 
-        // Store pending session data for dedication prompt
-        pendingDedicationSession = PendingSession(
-            startTime = startTime,
-            rotations = currentSessionRotations,
-            mantras = currentSessionMantras,
-            mantrasPerRotation = _mantrasPerRotation.value,
-            mantraId = _currentMantra.value.id,
-            mode = _spinMode.value,
-            averageRpm = avgRpm,
-            peakRpm = _peakRpm.value,
-            intention = _currentIntention.value.ifBlank { null },
-            sessionGoal = if (_sessionGoal.value > 0) _sessionGoal.value else null,
-            wheelId = _currentWheelId.value
-        )
+        val recordJob = viewModelScope.launch { recordCompletedSession(session, durationSeconds) }
+        pendingDedicationSession = PendingSession(session, durationSeconds, recordJob)
 
         _hasActiveSession.value = false
         _showDedicationPrompt.value = true
@@ -2188,9 +2250,12 @@ class WheelViewModel(
 
     private fun resetSessionState() {
         sessionStartTime = null
+        sessionTimerBase = null
+        sessionPricing = null
         currentSessionRotations = 0L
         currentSessionMantras = BigInteger.ZERO
-        sessionId = null
+        sessionKey = null
+        stopCheckpointing()
         _rotationCount.value = 0L
         _sessionMantras.value = BigInteger.ZERO
         _hasActiveSession.value = false
@@ -2200,7 +2265,6 @@ class WheelViewModel(
         _averageRpm.value = 0f
         _sessionDurationSeconds.value = 0L
         _isPaused.value = false
-        rpmSamples.clear()
         rpmSampleCount = 0
         sessionStartRpmSum = 0f
         sessionTimerJob?.cancel()
@@ -2266,37 +2330,30 @@ class WheelViewModel(
     }
 
     /**
-     * Recomputes [_highestMilestoneTier] from a lifetime-mantra total. Tier is
-     * the count of [audioMilestoneThresholds] entries the total has reached or
-     * exceeded (1..8), or 0 if below the lowest threshold. Idempotent.
+     * Recomputes [_highestMilestoneTier] from a lifetime-mantra total via
+     * [Milestones.tierFor]. Idempotent.
      */
     private fun updateHighestMilestoneTier(lifetimeMantras: BigInteger) {
-        var tier = 0
-        for ((i, threshold) in audioMilestoneThresholds.withIndex()) {
-            if (lifetimeMantras >= threshold) tier = i + 1
-        }
-        _highestMilestoneTier.value = tier
+        _highestMilestoneTier.value = Milestones.tierFor(lifetimeMantras)
     }
 
     private suspend fun checkAchievements(totalMantras: BigInteger) {
         val currentlyUnlocked = _unlockedAchievements.value
-        val allAchievements = Achievements.ALL
-        
-        for (achievement in allAchievements) {
-            if (achievement.id !in currentlyUnlocked && totalMantras >= achievement.mantrasRequired) {
-                userPreferences.unlockAchievement(achievement.id)
-                val tierIndex = audioMilestoneThresholds.indexOfFirst { it == achievement.mantrasRequired }
-                if (tierIndex < 0) {
-                    Log.w(
-                        "WheelViewModel",
-                        "Unlocked achievement ${achievement.id} (mantrasRequired=${
-                            achievement.mantrasRequired}) has no matching audio milestone threshold"
-                    )
-                }
-                val tier = tierIndex.coerceIn(0, 7)
-                triggerMilestoneHaptic(tier)
-                _newlyUnlockedAchievement.value = achievement
+        // currentlyUnlocked is a snapshot, so filtering up front is equivalent to the
+        // previous per-iteration check.
+        for (achievement in Milestones.newlyUnlocked(totalMantras, currentlyUnlocked)) {
+            userPreferences.unlockAchievement(achievement.id)
+            val tierIndex = Milestones.thresholdIndexOf(achievement.mantrasRequired)
+            if (tierIndex < 0) {
+                Log.w(
+                    "WheelViewModel",
+                    "Unlocked achievement ${achievement.id} (mantrasRequired=${
+                        achievement.mantrasRequired}) has no matching audio milestone threshold"
+                )
             }
+            val tier = tierIndex.coerceIn(0, 7)
+            triggerMilestoneHaptic(tier)
+            _newlyUnlockedAchievement.value = achievement
         }
     }
 
@@ -2307,45 +2364,36 @@ class WheelViewModel(
     private fun calculateAngularChange(newAngle: Float): Float {
         if (dragHistory.isEmpty()) return 0f
         val lastAngle = dragHistory.last().angle
-        var diff = newAngle - lastAngle
         // Normalize to [-PI, PI]
-        while (diff > PI) diff -= TWO_PI
-        while (diff < -PI) diff += TWO_PI
-        return diff
+        return SpinPhysics.normalizeAngle(newAngle - lastAngle)
     }
 
     private fun checkRotationCompletion(angularDiff: Float) {
         // Track cumulative rotation for counting
         val totalRotation = _rotationAngle.value
-        val newRevolutions = (totalRotation / TWO_PI).toLong()
-        val oldRevolutions = ((totalRotation - angularDiff) / TWO_PI).toLong()
-        if (newRevolutions > oldRevolutions) {
-            _rotationCount.value += (newRevolutions - oldRevolutions)
-            onRotationComplete(newRevolutions - oldRevolutions)
+        val crossed = SpinPhysics.revolutionsCrossed(totalRotation - angularDiff, totalRotation)
+        if (crossed > 0) {
+            ensureSessionForRotation()
+            _rotationCount.value += crossed
+            onRotationComplete(crossed)
         }
+    }
+
+    /**
+     * Every counted rotation must belong to a live session. Rotations made
+     * while dragging happen BEFORE onDragEnd() starts the session; they used to
+     * be counted into no session and then zeroed when onDragEnd() initialized
+     * it, so a slowly dragged first turn (or several) was silently lost.
+     */
+    private fun ensureSessionForRotation() {
+        if (sessionStartTime == null) startSessionIfNeeded()
     }
 
     private fun triggerHapticTick() {
         if (!shouldVibrate()) return
         val rpm = _currentRpm.value
-        triggerScaledHaptic(getTickDuration(rpm), getTickAmplitudeScale(rpm))
-    }
-
-    /**
-     * Rotation-tick duration scales inversely with RPM: slow turns produce long,
-     * distinct mechanical clicks (prayer beads through fingers); fast turns
-     * dissolve into a smooth hum as individual clicks merge.
-     */
-    private fun getTickDuration(rpm: Float): Long = when {
-        rpm < 30f -> 8L
-        rpm < 60f -> 5L
-        else -> 3L
-    }
-
-    private fun getTickAmplitudeScale(rpm: Float): Float = when {
-        rpm < 30f -> 1.0f
-        rpm < 60f -> 0.7f
-        else -> 0.45f
+        // Tick duration/amplitude scale inversely with RPM (see HapticPatterns).
+        triggerScaledHaptic(HapticPatterns.tickDurationMs(rpm), HapticPatterns.tickAmplitudeScale(rpm))
     }
 
     private fun triggerHapticPause() {
@@ -2366,44 +2414,22 @@ class WheelViewModel(
     }
 
     /**
-     * Milestone haptic patterns scale with milestone magnitude (tiers 0–7,
-     * matching [audioMilestoneThresholds]: 1K, 10K, 100K, 1M, 10M, 100M, 1B, 1T).
-     *
-     *  tiers 0–1 — acknowledgment : single pulse
-     *  tiers 2–3 — celebration    : double pulse
-     *  tiers 4–5 — resonance      : triple pulse, building
-     *  tiers 6–7 — cosmic moment  : sustained rising waveform
+     * Plays the milestone haptic for [tier] (0–7, matching
+     * [Milestones.MILESTONE_THRESHOLDS]); the pattern choice lives in
+     * [HapticPatterns.milestonePattern].
      */
     private fun triggerMilestoneHapticInternal(tier: Int) {
         val intensity = _vibrationIntensity.value
-        fun amp(base: Int) = (base * intensity).toInt().coerceIn(1, 255)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val effect: VibrationEffect = when (tier / 2) {
-                0 -> VibrationEffect.createOneShot(HAPTIC_MILESTONE_DURATION, amp(200))
-                1 -> VibrationEffect.createWaveform(
-                    longArrayOf(0, HAPTIC_MILESTONE_DURATION, 50, HAPTIC_MILESTONE_DURATION),
-                    intArrayOf(0, amp(210), 0, amp(210)),
-                    -1
-                )
-                2 -> VibrationEffect.createWaveform(
-                    longArrayOf(0, HAPTIC_MILESTONE_DURATION, 40, HAPTIC_MILESTONE_DURATION, 40, 30),
-                    intArrayOf(0, amp(210), 0, amp(225), 0, amp(245)),
-                    -1
-                )
-                else -> VibrationEffect.createWaveform(
-                    longArrayOf(0, 30, 60, 40, 60, 50, 80, 80),
-                    intArrayOf(0, amp(150), 0, amp(200), 0, amp(230), 0, amp(255)),
-                    -1
-                )
+            val effect: VibrationEffect = when (val pattern = HapticPatterns.milestonePattern(tier, intensity)) {
+                is HapticPatterns.Pattern.OneShot ->
+                    VibrationEffect.createOneShot(pattern.durationMs, pattern.amplitude)
+                is HapticPatterns.Pattern.Waveform ->
+                    VibrationEffect.createWaveform(pattern.timings, pattern.amplitudes, -1)
             }
             vibrator.vibrate(effect)
         } else {
-            val durationMs = when (tier / 2) {
-                0 -> HAPTIC_MILESTONE_DURATION
-                1 -> 90L
-                2 -> 130L
-                else -> 400L
-            }
+            val durationMs = HapticPatterns.legacyMilestoneDurationMs(tier)
             @Suppress("DEPRECATION")
             vibrator.vibrate(durationMs)
         }
@@ -2412,7 +2438,7 @@ class WheelViewModel(
     private fun triggerScaledHaptic(durationMs: Long, amplitudeScale: Float) {
         val intensity = _vibrationIntensity.value
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val amplitude = (255 * amplitudeScale * intensity).toInt().coerceIn(1, 255)
+            val amplitude = HapticPatterns.scaledTickAmplitude(amplitudeScale, intensity)
             vibrator.vibrate(VibrationEffect.createOneShot(durationMs, amplitude))
         } else {
             @Suppress("DEPRECATION")
@@ -2428,6 +2454,17 @@ class WheelViewModel(
 
     fun setAppInForeground(inForeground: Boolean) {
         _isAppInForeground.value = inForeground
+        if (inForeground) {
+            // Breath mode still on: resume listening (idempotent).
+            if (_breathModeEnabled.value) breathModeController?.start()
+        } else {
+            // Backgrounded apps are the ones the OS kills: persist the live
+            // session right away instead of waiting for the next periodic tick.
+            checkpointNow()
+            // No background microphone: API 34+ forbids it without a
+            // microphone-type foreground service, and it is a privacy issue.
+            breathModeController?.stop()
+        }
     }
 
     fun startSessionFromWidget() {
@@ -2485,8 +2522,7 @@ class WheelViewModel(
     private fun triggerHaptic(durationMs: Long) {
         val intensity = _vibrationIntensity.value
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val amplitude = (VibrationEffect.DEFAULT_AMPLITUDE * intensity).toInt()
-                .coerceIn(1, 255)
+            val amplitude = HapticPatterns.scaledAmplitude(VibrationEffect.DEFAULT_AMPLITUDE, intensity)
             val effect = VibrationEffect.createOneShot(durationMs, amplitude)
             vibrator.vibrate(effect)
         } else {
@@ -2500,10 +2536,34 @@ class WheelViewModel(
         // WorkManager (not GlobalScope) survives process death, so the session
         // is not lost if the app is killed mid-write. dedication=null because
         // no UI context is available here; user can edit in History.
+        //
+        // The checkpoint for this session stays until the worker (or the next
+        // launch's recovery) records it; both upsert by sessionKey, so whichever
+        // runs second is a no-op or a newer-snapshot replace — never a double count.
         val snapshot = createSessionFromCurrentState()
+        // Also persist the final snapshot as a checkpoint right away (the process
+        // normally outlives the VM briefly), so a later resume/recovery sees the
+        // newest counts even before the worker runs.
+        val finalCheckpoint = buildCheckpoint()
+        sessionKey = null // stop any in-flight checkpoint write for this session
+        if (finalCheckpoint != null) {
+            appScope.launch {
+                recoveryJob?.join()
+                checkpointMutex.withLock {
+                    try {
+                        ledgerDao.saveCheckpoint(finalCheckpoint)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w("WheelViewModel", "Final checkpoint write failed", e)
+                    }
+                }
+            }
+        }
         if (snapshot != null) {
             SessionSaveWorker.enqueue(
                 context = appContext,
+                sessionKey = snapshot.sessionKey,
                 startedAt = snapshot.startedAt,
                 rotations = snapshot.rotationCount,
                 mantrasPerRotation = snapshot.mantrasPerRotation,
@@ -2526,24 +2586,23 @@ class WheelViewModel(
         breathModeController?.stop()
     }
 
-    private data class DragEvent(
-        val angle: Float,
-        val timestamp: Long
-    )
-
     /**
      * Factory for creating WheelViewModel with dependencies.
      */
     class Factory(
         private val lifetimeStatsDao: LifetimeStatsDao,
         private val sessionDao: SessionDao,
+        private val ledgerDao: LedgerDao,
+        private val appScope: CoroutineScope,
         private val userPreferences: UserPreferences,
         private val vibrator: Vibrator,
         private val appContext: Context
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return WheelViewModel(lifetimeStatsDao, sessionDao, userPreferences, vibrator, appContext) as T
+            return WheelViewModel(
+                lifetimeStatsDao, sessionDao, ledgerDao, appScope, userPreferences, vibrator, appContext
+            ) as T
         }
     }
 }

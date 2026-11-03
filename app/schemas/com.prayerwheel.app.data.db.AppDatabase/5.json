@@ -1,0 +1,302 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 5,
+    "identityHash": "a3899831d6046cda1c1c69e4af66f054",
+    "entities": [
+      {
+        "tableName": "sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startedAt` INTEGER NOT NULL, `endedAt` INTEGER, `rotationCount` INTEGER NOT NULL, `mantrasPerRotation` INTEGER NOT NULL, `totalMantras` TEXT NOT NULL, `mantraId` TEXT NOT NULL, `dedication` TEXT, `mode` TEXT NOT NULL, `average_rpm` REAL NOT NULL, `peak_rpm` REAL NOT NULL, `total_spins` INTEGER NOT NULL, `intention` TEXT, `session_goal` INTEGER, `wheel_id` TEXT, `label` TEXT, `session_key` TEXT, `recorded_at` INTEGER, `duration_seconds` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "startedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endedAt",
+            "columnName": "endedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "rotationCount",
+            "columnName": "rotationCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mantrasPerRotation",
+            "columnName": "mantrasPerRotation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalMantras",
+            "columnName": "totalMantras",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mantraId",
+            "columnName": "mantraId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dedication",
+            "columnName": "dedication",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "mode",
+            "columnName": "mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "averageRpm",
+            "columnName": "average_rpm",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "peakRpm",
+            "columnName": "peak_rpm",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalSpins",
+            "columnName": "total_spins",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intention",
+            "columnName": "intention",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sessionGoal",
+            "columnName": "session_goal",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "wheelId",
+            "columnName": "wheel_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sessionKey",
+            "columnName": "session_key",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "recordedAt",
+            "columnName": "recorded_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "durationSeconds",
+            "columnName": "duration_seconds",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_sessions_session_key",
+            "unique": true,
+            "columnNames": [
+              "session_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_sessions_session_key` ON `${TABLE_NAME}` (`session_key`)"
+          }
+        ]
+      },
+      {
+        "tableName": "lifetime_stats",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `totalRotations` INTEGER NOT NULL, `totalMantras` TEXT NOT NULL, `sessionsCompleted` INTEGER NOT NULL, `firstSessionAt` INTEGER, `total_spinning_time_seconds` INTEGER NOT NULL, `average_session_duration_seconds` INTEGER NOT NULL, `reset_at` INTEGER, `wiped_at` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalRotations",
+            "columnName": "totalRotations",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalMantras",
+            "columnName": "totalMantras",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionsCompleted",
+            "columnName": "sessionsCompleted",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "firstSessionAt",
+            "columnName": "firstSessionAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "totalSpinningTimeSeconds",
+            "columnName": "total_spinning_time_seconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "averageSessionDurationSeconds",
+            "columnName": "average_session_duration_seconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "resetAt",
+            "columnName": "reset_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "wipedAt",
+            "columnName": "wiped_at",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "active_session",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionKey` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `rotationCount` INTEGER NOT NULL, `mantrasPerRotation` INTEGER NOT NULL, `totalMantras` TEXT NOT NULL, `mantraId` TEXT NOT NULL, `mode` TEXT NOT NULL, `averageRpm` REAL NOT NULL, `peakRpm` REAL NOT NULL, `intention` TEXT, `sessionGoal` INTEGER, `wheelId` TEXT, `label` TEXT, `durationSeconds` INTEGER NOT NULL, PRIMARY KEY(`sessionKey`))",
+        "fields": [
+          {
+            "fieldPath": "sessionKey",
+            "columnName": "sessionKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "startedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rotationCount",
+            "columnName": "rotationCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mantrasPerRotation",
+            "columnName": "mantrasPerRotation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalMantras",
+            "columnName": "totalMantras",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mantraId",
+            "columnName": "mantraId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mode",
+            "columnName": "mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "averageRpm",
+            "columnName": "averageRpm",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "peakRpm",
+            "columnName": "peakRpm",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intention",
+            "columnName": "intention",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sessionGoal",
+            "columnName": "sessionGoal",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "wheelId",
+            "columnName": "wheelId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "durationSeconds",
+            "columnName": "durationSeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionKey"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'a3899831d6046cda1c1c69e4af66f054')"
+    ]
+  }
+}

@@ -76,17 +76,30 @@ object NumberFormatter {
         "Octodecillion", "Novemdecillion", "Vigintillion"
     )
 
-    fun formatWithStyle(number: BigInteger, style: com.prayerwheel.app.data.datastore.NumberFormatStyle): String {
+    /**
+     * [notation] only affects the abbreviated STANDARD style, and only above
+     * 999T: STANDARD continues Qa, Qi, Sx…; EXTENDED continues aa, ab, ac….
+     */
+    fun formatWithStyle(
+        number: BigInteger,
+        style: com.prayerwheel.app.data.datastore.NumberFormatStyle,
+        notation: com.prayerwheel.app.data.datastore.NumberNotation = com.prayerwheel.app.data.datastore.NumberNotation.STANDARD
+    ): String {
         return when (style) {
-            com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD -> format(number)
+            com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD ->
+                format(number, useDoubleNotation = notation == com.prayerwheel.app.data.datastore.NumberNotation.EXTENDED)
             com.prayerwheel.app.data.datastore.NumberFormatStyle.EXACT -> formatWithCommas(number)
             com.prayerwheel.app.data.datastore.NumberFormatStyle.SCIENTIFIC -> formatScientific(number)
             com.prayerwheel.app.data.datastore.NumberFormatStyle.LONG_FORM -> formatLongForm(number)
         }
     }
 
-    fun formatWithStyle(number: Long, style: com.prayerwheel.app.data.datastore.NumberFormatStyle): String {
-        return formatWithStyle(number.toBigInteger(), style)
+    fun formatWithStyle(
+        number: Long,
+        style: com.prayerwheel.app.data.datastore.NumberFormatStyle,
+        notation: com.prayerwheel.app.data.datastore.NumberNotation = com.prayerwheel.app.data.datastore.NumberNotation.STANDARD
+    ): String {
+        return formatWithStyle(number.toBigInteger(), style, notation)
     }
 
     private fun formatScientific(number: BigInteger): String {

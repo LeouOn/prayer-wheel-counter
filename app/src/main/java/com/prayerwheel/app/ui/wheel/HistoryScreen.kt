@@ -2,10 +2,8 @@ package com.prayerwheel.app.ui.wheel
 
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -15,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,15 +28,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -58,14 +52,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.prayerwheel.app.data.datastore.SpinMode
+import com.prayerwheel.app.ui.components.StatItem
 import com.prayerwheel.app.ui.components.bounceClick
 import com.prayerwheel.app.data.db.dao.SessionDao
 import com.prayerwheel.app.data.model.LifetimeStats
@@ -74,12 +66,15 @@ import com.prayerwheel.app.data.model.SavedWheel
 import com.prayerwheel.app.data.model.Session
 import com.prayerwheel.app.ui.components.LogPracticeDialog
 import com.prayerwheel.app.ui.components.NumberFormatter
-import com.prayerwheel.app.ui.theme.StarGold
-import com.prayerwheel.app.ui.theme.StarLightBlue
+import com.prayerwheel.app.ui.components.calculateDuration
+import com.prayerwheel.app.ui.wheel.history.SessionCard
+import com.prayerwheel.app.ui.wheel.history.formatBigNumber
+import com.prayerwheel.app.ui.wheel.history.formatNumber
 import kotlinx.coroutines.launch
 
 import java.math.BigInteger
 import java.text.SimpleDateFormat
+import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 
@@ -132,18 +127,19 @@ fun HistoryScreen(
         }
     }
 
-    // Calculate time-based thresholds
-    val now = System.currentTimeMillis()
-    val todayStart = remember {
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        sdf.parse(sdf.format(Date(now)))?.time ?: now
-    }
-    val sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000L)
-    val thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000L)
+    // Refreshes on resume and after local midnight, so "Today" never goes stale.
+    val today = rememberToday()
 
     // Filter sessions
-    val filteredSessions = remember(sessionsList, selectedMantraFilter, selectedTimeFilter, selectedModeFilter) {
+    val filteredSessions = remember(
+        sessionsList, selectedMantraFilter, selectedWheelFilter, selectedTimeFilter, selectedModeFilter, today
+    ) {
         val currentMode = selectedModeFilter
+        // Time thresholds are computed each time the filter runs, not once per screen.
+        val now = System.currentTimeMillis()
+        val todayStart = today.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000L)
+        val thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000L)
         sessionsList.filter { session ->
             val matchesMantra = selectedMantraFilter == null || session.mantraId == selectedMantraFilter
             val matchesWheel = selectedWheelFilter == null || session.wheelId == selectedWheelFilter
@@ -635,415 +631,9 @@ private fun LifetimeStatsCard(stats: LifetimeStats?) {
 }
 
 /**
- * Individual stat item in the summary card.
- */
-@Composable
-private fun StatItem(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onPrimaryContainer
-        )
-    }
-}
-
-/**
- * Enhanced session card showing detailed session information.
- */
-@Composable
-private fun SessionCard(
-    session: Session,
-    savedWheels: List<SavedWheel> = emptyList(),
-    onDeleteClick: () -> Unit,
-    onLabelChange: (String?) -> Unit
-) {
-    val mantra = Mantras.byId(session.mantraId)
-    val displayName = mantra?.displayName ?: session.mantraId
-    val tibetan = mantra?.tibetan
-    val wheelName = session.wheelId?.let { id -> savedWheels.find { it.id == id }?.name ?: "Deleted Wheel" }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            // Date, label chip, and duration row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = formatDateTime(session.startedAt),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    LabelChipWithEditor(
-                        label = session.label,
-                        onChange = onLabelChange
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    session.endedAt?.let { endedAt ->
-                        val duration = calculateDuration(session.startedAt, endedAt)
-                        if (duration.isNotEmpty()) {
-                            Text(
-                                text = duration,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                        }
-                    }
-                    IconButton(
-                        onClick = onDeleteClick
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete session",
-                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.6f),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Mantra name
-            Column {
-                Text(
-                    text = displayName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                tibetan?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontStyle = FontStyle.Italic,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Stats row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Start
-            ) {
-                Text(
-                    text = "${formatNumber(session.rotationCount)} rotations",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = "${formatBigNumber(session.totalMantras)} mantras",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // RPM stats row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Start
-            ) {
-                if (session.averageRpm > 0) {
-                    Text(
-                        text = "Avg: ${String.format(Locale.getDefault(), "%.1f", session.averageRpm)} RPM",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                }
-                if (session.peakRpm > 0) {
-                    Text(
-                        text = "Peak: ${String.format(Locale.getDefault(), "%.1f", session.peakRpm)} RPM",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Mode and Wheel row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = formatSpinMode(session.mode),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                )
-                if (wheelName != null) {
-                    Text(
-                        text = "Wheel: $wheelName",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    )
-                }
-            }
-
-            // Intention (if set)
-            session.intention?.let { intention ->
-                if (intention.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Intention: $intention",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontStyle = FontStyle.Italic,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            // Dedication (if present)
-            session.dedication?.let { dedication ->
-                if (dedication.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = dedication,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * Formats a number with K/M/B suffixes for large values.
- */
-private fun formatNumber(number: Long): String {
-    return NumberFormatter.formatLong(number)
-}
-
-/**
- * Formats a BigInteger for display.
- */
-private fun formatBigNumber(mantras: BigInteger): String {
-    return NumberFormatter.format(mantras)
-}
-
-/**
  * Formats a timestamp to a readable date string.
  */
 private fun formatDate(timestamp: Long): String {
     val sdf = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
     return sdf.format(Date(timestamp))
-}
-
-/**
- * Formats a timestamp to a readable date/time string.
- */
-private fun formatDateTime(timestamp: Long): String {
-    val sdf = SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault())
-    return sdf.format(Date(timestamp))
-}
-
-/**
- * Calculates duration string from start to end time.
- */
-private fun calculateDuration(startedAt: Long, endedAt: Long): String {
-    val durationMs = endedAt - startedAt
-    val seconds = durationMs / 1000
-    val minutes = seconds / 60
-    val hours = minutes / 60
-    
-    return when {
-        hours > 0 -> "${hours}h ${minutes % 60}m"
-        minutes > 0 -> "${minutes}m"
-        seconds > 0 -> "${seconds}s"
-        else -> ""
-    }
-}
-
-/**
- * Formats spin mode string to display name.
- */
-private fun formatSpinMode(mode: String): String {
-    return try {
-        when (SpinMode.valueOf(mode)) {
-            SpinMode.MANUAL -> "Manual"
-            SpinMode.TWO_HANDED -> "Two-Handed"
-            SpinMode.AUTO_SPIN -> "Auto-Spin"
-            SpinMode.TWO_HANDED_AUTO -> "Two-Handed Auto"
-        }
-    } catch (e: IllegalArgumentException) {
-        mode
-    }
-}
-
-@Composable
-private fun LabelChipWithEditor(
-    label: String?,
-    onChange: (String?) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var menuExpanded by remember { mutableStateOf(false) }
-    var showCustomDialog by remember { mutableStateOf(false) }
-
-    Box(modifier = modifier) {
-        LabelChip(
-            label = label,
-            onClick = { menuExpanded = true }
-        )
-        DropdownMenu(
-            expanded = menuExpanded,
-            onDismissRequest = { menuExpanded = false }
-        ) {
-            DropdownMenuItem(
-                text = { Text("Morning") },
-                onClick = {
-                    menuExpanded = false
-                    onChange("morning")
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Evening") },
-                onClick = {
-                    menuExpanded = false
-                    onChange("evening")
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Custom…") },
-                onClick = {
-                    menuExpanded = false
-                    showCustomDialog = true
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("None") },
-                onClick = {
-                    menuExpanded = false
-                    onChange(null)
-                }
-            )
-        }
-    }
-
-    if (showCustomDialog) {
-        val isPreset = label.equals("morning", ignoreCase = true) ||
-            label.equals("evening", ignoreCase = true)
-        LabelCustomDialog(
-            initialText = if (label != null && !isPreset) label else "",
-            onConfirm = { text ->
-                onChange(text.ifBlank { null })
-                showCustomDialog = false
-            },
-            onDismiss = { showCustomDialog = false }
-        )
-    }
-}
-
-@Composable
-private fun LabelChip(
-    label: String?,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val normalized = label?.lowercase(Locale.getDefault())
-    val (bgAlpha, fgColor, text) = when (normalized) {
-        "morning" -> Triple(0.45f, MaterialTheme.colorScheme.onSurface, "Morning")
-        "evening" -> Triple(0.5f, MaterialTheme.colorScheme.onSurface, "Evening")
-        null -> Triple(
-            0.4f,
-            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-            "—"
-        )
-        else -> Triple(
-            0.5f,
-            MaterialTheme.colorScheme.onSurface,
-            label
-        )
-    }
-
-    val backgroundColor = when (normalized) {
-        "morning" -> StarLightBlue
-        "evening" -> StarGold
-        else -> MaterialTheme.colorScheme.surfaceVariant
-    }
-
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .background(backgroundColor.copy(alpha = bgAlpha))
-            .padding(horizontal = 8.dp, vertical = 2.dp)
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            color = fgColor,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun LabelCustomDialog(
-    initialText: String,
-    onConfirm: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var text by remember { mutableStateOf(initialText) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Custom Label") },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                singleLine = true,
-                placeholder = { Text("e.g., Lunch break") },
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(text.trim()) }) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
 }

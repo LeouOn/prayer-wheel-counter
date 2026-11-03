@@ -50,6 +50,8 @@ fun TodayProgressCard(
     currentIntention: String,
     numberFormatStyle: com.prayerwheel.app.data.datastore.NumberFormatStyle =
         com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD,
+    numberNotation: com.prayerwheel.app.data.datastore.NumberNotation =
+        com.prayerwheel.app.data.datastore.NumberNotation.STANDARD,
     dailyMantraGoal: Long = 0L,
     dailyMantraProgress: Float = 0f,
     dailyTimeGoalSeconds: Long = 0L,
@@ -112,7 +114,7 @@ fun TodayProgressCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            val formattedMantras = NumberFormatter.formatWithStyle(todayMantraCount, numberFormatStyle)
+            val formattedMantras = NumberFormatter.formatWithStyle(todayMantraCount, numberFormatStyle, numberNotation)
             val practiceLabel = formatPracticeTime(todayPracticeSeconds)
             Text(
                 text = "Today: $formattedMantras mantras  ·  $practiceLabel",
@@ -224,12 +226,4 @@ private fun DoneMarker(done: Boolean, sizeDp: Dp, outlineColor: Color) {
                 }
         )
     }
-}
-
-private fun formatPracticeTime(seconds: Long): String {
-    if (seconds <= 0L) return "0m"
-    val totalMinutes = seconds / 60L
-    val hours = totalMinutes / 60L
-    val minutes = totalMinutes % 60L
-    return if (hours > 0L) "${hours}h ${minutes}m" else "${minutes}m"
 }

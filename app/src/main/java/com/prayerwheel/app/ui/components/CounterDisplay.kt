@@ -36,6 +36,7 @@ fun CounterDisplay(
     currentRpm: Float = 0f,
     isSpinning: Boolean = false,
     formatStyle: com.prayerwheel.app.data.datastore.NumberFormatStyle = com.prayerwheel.app.data.datastore.NumberFormatStyle.STANDARD,
+    notation: com.prayerwheel.app.data.datastore.NumberNotation = com.prayerwheel.app.data.datastore.NumberNotation.STANDARD,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -77,7 +78,8 @@ fun CounterDisplay(
             count = lifetimeMantras,
             label = "Lifetime",
             isPrimary = true,
-            formatStyle = formatStyle
+            formatStyle = formatStyle,
+            notation = notation
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -87,7 +89,8 @@ fun CounterDisplay(
             count = sessionMantras,
             label = "Session",
             isPrimary = false,
-            formatStyle = formatStyle
+            formatStyle = formatStyle,
+            notation = notation
         )
     }
 }
@@ -100,9 +103,10 @@ private fun AnimatedMantraCount(
     count: BigInteger,
     label: String,
     isPrimary: Boolean,
-    formatStyle: com.prayerwheel.app.data.datastore.NumberFormatStyle
+    formatStyle: com.prayerwheel.app.data.datastore.NumberFormatStyle,
+    notation: com.prayerwheel.app.data.datastore.NumberNotation
 ) {
-    val formattedCount = formatBigNumber(count, formatStyle)
+    val formattedCount = NumberFormatter.formatWithStyle(count, formatStyle, notation)
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -167,12 +171,6 @@ private fun AnimatedMantraCount(
     }
 }
 
-/**
- * Formats a BigInteger with locale-aware thousand separators and custom styles.
- */
-private fun formatBigNumber(value: BigInteger, style: com.prayerwheel.app.data.datastore.NumberFormatStyle): String {
-    return NumberFormatter.formatWithStyle(value, style)
-}
 
 /**
  * Formats RPM for display.

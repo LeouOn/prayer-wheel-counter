@@ -2,6 +2,8 @@
 
 *Android-first, vibe-coded, single-developer scope. Design target: feels devotional, not gamified; respects traditional conventions while leveraging modern UI affordances.*
 
+*Revised 2026-11-02 (v1.1): §2, §3.6, §10 and §11 updated to match the app as built. Quiet milestones, practice-day runs and a user-initiated share are now part of the design; unimplemented settings were removed rather than specced.*
+
 ---
 
 ## 1. Recommended Stack
@@ -31,7 +33,7 @@ A digital འཁོར་ལོ་ (*khor lo*) — prayer wheel — that:
 2. Counts rotations × mantras-per-revolution = accumulated mantra count
 3. Persists lifetime totals across sessions
 4. Offers spin modes: drag-to-spin (with momentum), continuous auto-spin, or two-handed gesture mode
-5. Treats the practice respectfully: no XP bars, no achievements with garish badges, no streak-shaming
+5. Treats the practice respectfully: no XP bars, no points, no leaderboards, no streak-shaming. Milestones exist but are quiet (see §11)
 
 ---
 
@@ -49,7 +51,7 @@ A digital འཁོར་ལོ་ (*khor lo*) — prayer wheel — that:
 **Interaction:**
 - **Drag-to-spin:** Circular drag on the drum imparts angular velocity. Decays via configurable "friction" coefficient.
 - **Flick-to-spin:** Quick gesture imparts higher initial velocity.
-- **Default direction: clockwise** (viewed from above) — this is non-negotiable for orthodox practice. Make counter-clockwise an explicitly opt-in toggle buried in advanced settings (some practitioners may want it for specific Bön or experimental contexts; default protects the casual user from inadvertent error).
+- **Default direction: clockwise** (viewed from above) — this is non-negotiable for orthodox practice. Make counter-clockwise an explicitly opt-in toggle buried in advanced settings (some practitioners may want it for specific Bön or experimental contexts; default protects the casual user from inadvertent error). Built as *Interaction → Counter-clockwise rotations*, with a visible banner while active.
 - **Long-press:** Pause spin instantly (for dedication moment).
 
 **Physics model:**
@@ -94,7 +96,7 @@ Built-in mantras (with optional audio playback at adjustable volume):
 | **Manual** | User drags. Wheel decays. Standard. | Default |
 | **Two-handed** | Wheel only spins while two distinct touch points are maintained. The friction coefficient drops to near-zero while engaged — rewards committed, embodied attention. | Toggle |
 | **Auto-spin** | Set RPM, wheel spins continuously. Useful for background accumulation during other practice (sitting, walking). | Toggle + RPM slider 1–60 |
-| **Wind mode** | Phone's microphone detects breath/wind; ambient audio drives spin. Genuinely playful, gestures toward རླུང་ (wind/prāṇa) symbolism. | Optional / experimental |
+| **Wind mode** | Phone's microphone detects breath/wind; ambient audio drives spin. Genuinely playful, gestures toward རླུང་ (wind/prāṇa) symbolism. Built as "Breath mode"; listens only while the app is in the foreground. | Optional / experimental |
 
 ### 3.5 Session Mechanics
 
@@ -108,38 +110,43 @@ Built-in mantras (with optional audio playback at adjustable volume):
 ### 3.6 Settings Architecture
 
 ```
-Settings/
+Settings/                         (as built, v1.1)
 ├── Wheel/
 │   ├── Mantra (selection)
-│   ├── Capacity (slider — mantras per rotation)
-│   ├── Rotation direction (clockwise default)
-│   ├── Wheel skin (color/material — copper, gold, silver, ivory)
-│   └── Drum aspect ratio
+│   └── Mantras per rotation (capacity slider)
 ├── Interaction/
-│   ├── Spin mode (manual / two-handed / auto / wind)
-│   ├── Friction coefficient
-│   ├── Max RPM
-│   ├── Haptics (off / light / strong)
-│   └── Tilt-to-spin sensitivity (use accelerometer; physical phone tilt nudges wheel)
+│   ├── Spin mode (manual / two-handed / auto / breath)
+│   ├── Friction, max RPM
+│   ├── Haptics (on/off, intensity, background vibration)
+│   └── Counter-clockwise rotations (opt-in; clockwise is the default)
 ├── Audio/
-│   ├── Mantra recitation (off / single voice / ensemble) — bundled audio
-│   ├── Bell on milestones (off / soft / standard)
-│   ├── Ambient (off / wind / stream / silence)
+│   ├── Bell at milestones (synthesized singing bowl)
+│   ├── Ambient sound (RPM-following drone)
 │   └── Master volume
 ├── Practice/
+│   ├── Practice calculator
 │   ├── Default dedication text
 │   ├── Show/hide live counter (some prefer to spin without watching numbers)
-│   ├── Milestone notifications (1M, 1B, 1T...)
-│   └── Daily reminder (optional, gentle — not a "streak alert")
+│   └── Session time goal
+├── Practice Rhythm/
+│   ├── Daily mantra goal, daily time goal
+│   ├── Morning / evening reminders (optional, gentle — not a "streak alert")
+│   ├── End-of-day summary
+│   ├── Auto-label sessions (morning / evening)
+│   └── Wheel mass
 ├── Display/
-│   ├── Theme (light / dark / sepia / dawn-dusk auto)
-│   ├── Background ambient animation (off / subtle / full)
-│   └── Always-on while session active
-└── Data/
-    ├── Export sessions (CSV/JSON)
-    ├── Backup (local file)
-    └── Reset lifetime counter (with confirmation)
+│   ├── Theme (system / light / dark / sepia / dawn-dusk)
+│   ├── Number format (standard / exact / scientific / long-form)
+│   ├── Number notation beyond trillions (Qa, Qi… or aa, ab…)
+│   ├── Keep screen on while session active
+│   └── Background animation intensity
+└── Data & Statistics/
+    ├── Export sessions (CSV / JSON), local backup file
+    └── Reset (with confirmation)
 ```
+(Wheel skins and view modes are chosen from the wheel screen, not Settings.)
+
+Not built, and removed from Settings in v1.1 rather than shown as no-op switches: rotation-direction switch (duplicated the counter-clockwise toggle), mantra recitation audio + volume, ambient soundscape choice + volume, milestone notifications, session merge threshold (a session ends when it is dedicated). Recitation audio, tilt-to-spin, drum aspect ratio and backup/restore remain on the roadmap (`docs/2027-readiness.md`).
 
 ---
 
@@ -276,13 +283,13 @@ My recommendation: **Option 1**, with friction reduced to near-zero while both t
 
 ## 10. Out of Scope for v1 (parking lot)
 
-- Multi-user / shared wheels
+- Multi-user / shared wheels (a one-off, user-initiated text share of an intention — "Send Light" — is in; anything networked is not)
 - Cloud sync
 - iOS port
 - Apple Watch / Wear OS companion
 - Video/AR rendering of large temple wheels
 - Integration with mala counters (Bluetooth bead counters exist!)
-- Community dedication boards
+- Community dedication boards, leaderboards
 
 Resist scope creep. Ship v1 first.
 
@@ -295,7 +302,14 @@ Resist scope creep. Ship v1 first.
 - Numbers are reported plainly; no "🎉 1 MILLION! 🎉"
 - Dedication text defaults to a real, traditional formula — not motivational platitudes
 - Settings use precise terms ("Mantras per rotation" not "Power level")
-- No leaderboards, no social sharing prompts in v1
+- No leaderboards; nothing networked
+
+**Revised in v1.1 to match the app as built:**
+
+- **Milestones are allowed, quietly.** Lifetime thresholds (108 → 1T) are marked with a short traditional quote, a bell if enabled, and unlock a wheel skin. "Unlocked", "Reward:" and "n / 10" are acceptable plain labels; no points, levels, confetti or pressure to reach the next one.
+- **Practice-day runs are allowed, without shaming.** The calendar may show current and best runs of practice days as plain facts. Never warn about "breaking" a run, never send a notification about one, never reset anything punitively.
+- **Sharing is user-initiated only.** "Send Light" shares an intention as plain text when the user taps it. The app never prompts, nags or rewards sharing.
+- **Emoji are sparing and devotional.** A small set of symbols with meaning in context (🪷 lotus, 🙏 añjali, 🌬 breath, ✨ for inspiration) may appear as accents. No celebratory emoji (🎉 🔥 💯), and never in numbers or headings that report counts.
 
 The app should feel like a tool a serious practitioner would tolerate, not a Calm-app spinoff. This is, paradoxically, also what makes it appealing to non-practitioners curious about the practice — earnestness reads as quality.
 

@@ -38,6 +38,7 @@ import com.prayerwheel.app.MainActivity
 import com.prayerwheel.app.PrayerWheelApp
 import com.prayerwheel.app.R
 import com.prayerwheel.app.ui.components.NumberFormatter
+import com.prayerwheel.app.ui.components.formatPracticeTime
 import com.prayerwheel.app.ui.theme.StarGold
 import kotlinx.coroutines.flow.first
 import java.math.BigInteger
@@ -221,14 +222,6 @@ class PrayerWheelWidget : GlanceAppWidget() {
         calendar.add(Calendar.DAY_OF_MONTH, 1)
         val startOfNextDay = calendar.timeInMillis
         return startOfDay to startOfNextDay
-    }
-
-    private fun formatPracticeTime(seconds: Long): String {
-        if (seconds <= 0L) return "0m"
-        val totalMinutes = seconds / 60L
-        val hours = totalMinutes / 60L
-        val minutes = totalMinutes % 60L
-        return if (hours > 0L) "${hours}h ${minutes}m" else "${minutes}m"
     }
 
     internal data class WidgetSnapshot(

@@ -12,59 +12,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.prayerwheel.app.data.model.SavedWheel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import org.json.JSONArray
-import org.json.JSONObject
 import java.util.UUID
-
-/**
- * Theme options for the app.
- */
-enum class AppTheme {
-    LIGHT,
-    DARK,
-    SEPIA,
-    DAWN_DUSK,
-    SYSTEM
-}
-
-/**
- * Spin modes for the prayer wheel.
- */
-enum class SpinMode {
-    MANUAL,        // drag-to-spin (current behavior)
-    TWO_HANDED,    // two simultaneous touches required
-    AUTO_SPIN,     // continuous at configurable RPM
-    TWO_HANDED_AUTO // auto-spin combined with two-handed friction
-}
-
-/**
- * View modes for the prayer wheel display.
- */
-enum class ViewMode {
-    SIDE_VIEW,     // side view with stem, cylinder, caps, crystal
-    TOP_DOWN,      // top-down circular view with mantra around rim
-    ABSTRACT,      // minimalist mandala/sacred geometry representation
-    TABLE_TOP,     // table top view with a wider base
-    GLOBE          // spherical wheel rotating on an axis
-}
-
-/**
- * Number formatting styles for the mantra counter.
- */
-enum class NumberFormatStyle {
-    STANDARD,      // 1.2M, 5B
-    LONG_FORM,     // 1 Million 200 Thousand
-    SCIENTIFIC,    // 1.2 x 10^6
-    EXACT          // 1,200,000
-}
-
-/**
- * Number notation style for displaying large numbers.
- */
-enum class NumberNotation {
-    STANDARD,      // K, M, B, T, Qa, Qi, etc.
-    EXTENDED       // aa, ab, ac, ... az, ba, bb, etc.
-}
 
 /**
  * User preferences stored via DataStore.
@@ -87,15 +35,10 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         val HAPTIC_ENABLED = booleanPreferencesKey("haptic_enabled")
         val CUSTOM_DEDICATION = stringPreferencesKey("custom_dedication")
         val HAS_COMPLETED_ONBOARDING = booleanPreferencesKey("has_completed_onboarding")
-        val CLOCKWISE_DIRECTION = booleanPreferencesKey("clockwise_direction")
-        val RECITATION_ENABLED = booleanPreferencesKey("recitation_enabled")
-        val RECITATION_VOLUME = floatPreferencesKey("recitation_volume")
         val BELL_AT_MILESTONES = booleanPreferencesKey("bell_at_milestones")
         val AMBIENT_ENABLED = booleanPreferencesKey("ambient_enabled")
-        val AMBIENT_VOLUME = floatPreferencesKey("ambient_volume")
         val MASTER_VOLUME = floatPreferencesKey("master_volume")
         val SHOW_COUNTER = booleanPreferencesKey("show_counter")
-        val MILESTONE_NOTIFICATIONS = booleanPreferencesKey("milestone_notifications")
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
         val COUNTER_CLOCKWISE_ENABLED = booleanPreferencesKey("counter_clockwise_enabled")
         val DAILY_MANTRA_GOAL = longPreferencesKey("daily_mantra_goal")
@@ -122,7 +65,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         val REMINDER_MORNING_MINUTE = intPreferencesKey("reminder_morning_minute")
         val REMINDER_EVENING_MINUTE = intPreferencesKey("reminder_evening_minute")
         val REMINDER_END_OF_DAY_MINUTE = intPreferencesKey("reminder_end_of_day_minute")
-        val SESSION_MERGE_THRESHOLD_MS = longPreferencesKey("session_merge_threshold_ms")
         val AUTO_LABEL_SESSIONS = booleanPreferencesKey("auto_label_sessions")
         val WHEEL_MASS = floatPreferencesKey("wheel_mass")
         val JE_NYER_ENABLED = booleanPreferencesKey("je_nyer_enabled")
@@ -171,18 +113,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         preferences[Keys.HAS_COMPLETED_ONBOARDING] ?: false
     }
 
-    val clockwiseDirection: Flow<Boolean> = dataStore.data.map { preferences ->
-        preferences[Keys.CLOCKWISE_DIRECTION] ?: true
-    }
-
-    val recitationEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
-        preferences[Keys.RECITATION_ENABLED] ?: false
-    }
-
-    val recitationVolume: Flow<Float> = dataStore.data.map { preferences ->
-        preferences[Keys.RECITATION_VOLUME] ?: 0.5f
-    }
-
     val bellAtMilestones: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[Keys.BELL_AT_MILESTONES] ?: false
     }
@@ -191,20 +121,12 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         preferences[Keys.AMBIENT_ENABLED] ?: false
     }
 
-    val ambientVolume: Flow<Float> = dataStore.data.map { preferences ->
-        preferences[Keys.AMBIENT_VOLUME] ?: 0.5f
-    }
-
     val masterVolume: Flow<Float> = dataStore.data.map { preferences ->
         preferences[Keys.MASTER_VOLUME] ?: 1.0f
     }
 
     val showCounter: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[Keys.SHOW_COUNTER] ?: true
-    }
-
-    val milestoneNotifications: Flow<Boolean> = dataStore.data.map { preferences ->
-        preferences[Keys.MILESTONE_NOTIFICATIONS] ?: true
     }
 
     val keepScreenOn: Flow<Boolean> = dataStore.data.map { preferences ->
@@ -336,10 +258,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         preferences[Keys.REMINDER_END_OF_DAY_MINUTE] ?: 30
     }
 
-    val sessionMergeThresholdMs: Flow<Long> = dataStore.data.map { preferences ->
-        preferences[Keys.SESSION_MERGE_THRESHOLD_MS] ?: 300000L
-    }
-
     val autoLabelSessions: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[Keys.AUTO_LABEL_SESSIONS] ?: true
     }
@@ -428,24 +346,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    suspend fun setClockwiseDirection(clockwise: Boolean) {
-        dataStore.edit { preferences ->
-            preferences[Keys.CLOCKWISE_DIRECTION] = clockwise
-        }
-    }
-
-    suspend fun setRecitationEnabled(enabled: Boolean) {
-        dataStore.edit { preferences ->
-            preferences[Keys.RECITATION_ENABLED] = enabled
-        }
-    }
-
-    suspend fun setRecitationVolume(volume: Float) {
-        dataStore.edit { preferences ->
-            preferences[Keys.RECITATION_VOLUME] = volume.coerceIn(0f, 1f)
-        }
-    }
-
     suspend fun setBellAtMilestones(enabled: Boolean) {
         dataStore.edit { preferences ->
             preferences[Keys.BELL_AT_MILESTONES] = enabled
@@ -458,12 +358,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    suspend fun setAmbientVolume(volume: Float) {
-        dataStore.edit { preferences ->
-            preferences[Keys.AMBIENT_VOLUME] = volume.coerceIn(0f, 1f)
-        }
-    }
-
     suspend fun setMasterVolume(volume: Float) {
         dataStore.edit { preferences ->
             preferences[Keys.MASTER_VOLUME] = volume.coerceIn(0f, 1f)
@@ -473,12 +367,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
     suspend fun setShowCounter(show: Boolean) {
         dataStore.edit { preferences ->
             preferences[Keys.SHOW_COUNTER] = show
-        }
-    }
-
-    suspend fun setMilestoneNotifications(enabled: Boolean) {
-        dataStore.edit { preferences ->
-            preferences[Keys.MILESTONE_NOTIFICATIONS] = enabled
         }
     }
 
@@ -675,12 +563,6 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    suspend fun setSessionMergeThresholdMs(thresholdMs: Long) {
-        dataStore.edit { preferences ->
-            preferences[Keys.SESSION_MERGE_THRESHOLD_MS] = thresholdMs.coerceAtLeast(0L)
-        }
-    }
-
     suspend fun setAutoLabelSessions(enabled: Boolean) {
         dataStore.edit { preferences ->
             preferences[Keys.AUTO_LABEL_SESSIONS] = enabled
@@ -705,40 +587,11 @@ class UserPreferences(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    private fun parseSavedWheelsJson(jsonString: String): List<SavedWheel> {
-        return try {
-            val jsonArray = JSONArray(jsonString)
-            (0 until jsonArray.length()).map { i ->
-                val obj = jsonArray.getJSONObject(i)
-                SavedWheel(
-                    id = obj.getString("id"),
-                    name = obj.getString("name"),
-                    capacity = obj.getLong("capacity"),
-                    mantraId = obj.getString("mantraId"),
-                    skinId = obj.optString("skinId", "traditional_gold"),
-                    createdAt = obj.optLong("createdAt", System.currentTimeMillis())
-                )
-            }
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
+    private fun parseSavedWheelsJson(jsonString: String): List<SavedWheel> =
+        SavedWheelsJson.parseSavedWheelsJson(jsonString)
 
-    private fun savedWheelsToJson(wheels: List<SavedWheel>): String {
-        val jsonArray = JSONArray()
-        wheels.forEach { wheel ->
-            val obj = JSONObject().apply {
-                put("id", wheel.id)
-                put("name", wheel.name)
-                put("capacity", wheel.capacity)
-                put("mantraId", wheel.mantraId)
-                put("skinId", wheel.skinId)
-                put("createdAt", wheel.createdAt)
-            }
-            jsonArray.put(obj)
-        }
-        return jsonArray.toString()
-    }
+    private fun savedWheelsToJson(wheels: List<SavedWheel>): String =
+        SavedWheelsJson.savedWheelsToJson(wheels)
 
     suspend fun clearAllData() {
         dataStore.edit { preferences ->
